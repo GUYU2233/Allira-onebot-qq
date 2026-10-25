@@ -74,6 +74,7 @@ export declare const TRACE_REASONS: {
     readonly outboundEmptyText: "正文为空，未发送";
     readonly outboundQqBlock: "回复含 [[qq]] 段，QQ 只发段内内容";
     readonly outboundSilent: "模型选择静默（[[qq_silent]]）";
+    readonly outboundMemeOnly: "正文只剩表情标记，未发送";
     readonly noticeErrorSendFailed: "错误通知发送失败";
     readonly deferredRegistered: "等待模型回复超时，已登记超时补发跟踪";
     readonly deferredDelivered: "超时补发：回合完成，最终结果已补发";

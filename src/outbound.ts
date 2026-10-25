@@ -17,7 +17,7 @@ import type { ChatId } from './chat.js'
 import { splitChatId } from './chat.js'
 import { OneBotActionError, OneBotNotConnectedError } from './connection.js'
 import { extractForwardBlocks, scanSensitive, stripMarkdown } from './split.js'
-import { extractQqBlock, SILENT_MARKER_RE } from './qqsplit.js'
+import { extractQqBlock, stripMemeMarkers, SILENT_MARKER_RE } from './qqsplit.js'
 import { renderTextImage } from './t2i/index.js'
 import { describeError } from './errors.js'
 import { TRACE_REASONS } from './trace.js'
@@ -154,7 +154,17 @@ export class OutboundPipeline {
         data: { webChars: text.length, qqChars: qqBody.length },
       })
     }
-    const outboundText = hasBlock ? qqBody : text
+    // 表情标记（阿莉拉二开）：`[表情: …]` 是 Web 前端的渲染指令，QQ 这头的图由
+    // send_meme 单独发一条图片消息，标记留在正文里就是一行方括号文字（顾羽
+    // 2026-10-25 报的漏字）。剥在段裁剪之后——只处理「要发到 QQ 的那份文本」，
+    // 审计照旧看全文。
+    const outboundText = stripMemeMarkers(hasBlock ? qqBody : text)
+    if (outboundText.trim() === '') {
+      // 整条只剩表情标记：图（如果有）已经单独发过，正文没有可发的东西。
+      this.ctx.log('debug', '正文只剩表情标记，QQ 未发送: ' + chatId)
+      this.ctx.trace?.(chatId, { stage: 'outbound', ok: true, reason: TRACE_REASONS.outboundMemeOnly })
+      return Promise.resolve([])
+    }
     return this.enqueue(chatId, async () => {
       if (!this.ctx.connected()) {
         if (options.queuable === true) {

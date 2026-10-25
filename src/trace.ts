@@ -108,6 +108,7 @@ export const TRACE_REASONS = {
   outboundEmptyText: '正文为空，未发送',
   outboundQqBlock: '回复含 [[qq]] 段，QQ 只发段内内容',
   outboundSilent: '模型选择静默（[[qq_silent]]）',
+  outboundMemeOnly: '正文只剩表情标记，未发送',
   noticeErrorSendFailed: '错误通知发送失败',
   // T3 (P2) 超时补发（deferred delivery）。
   deferredRegistered: '等待模型回复超时，已登记超时补发跟踪',

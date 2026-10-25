@@ -877,3 +877,12 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 - **清单同步**：package.json version 0.9.5→0.9.6；dsh.plugin.json 同步 0.9.6；tests/commands.spec.ts packageVersion 断言随版更新为 0.9.6（it 描述串 + expect 两行，仿 0.9.3/0.9.4/0.9.5 发版先例）；package-lock.json 沿用既有惯例不动。
 - **发布面收口**：commit → push origin main（同批带上此前未推送的 `ac5c80a`）→ tag `v0.9.6` → GitHub Release → npm publish → npmmirror 同步 → profile web 升级 0.9.6；同批**补建历史缺失的 v0.9.4 / v0.9.5 GitHub Release**（只建 Release，不新建、不覆盖既有 tag）。宿主进程未重启，0.9.6 随宿主下次重启生效。
 
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.2：剥表情标记 + companionQq 入面板 + 包名改 Allira-onebot-qq
+
+- **背景**：QQ 那头曾把 `[表情: …]` 标记原样收到了。根因：该标记由**前端**渲染器（dsh-meme 的 `MEME_TEXT_RE`）消费，QQ 侧图片是 `send_meme` → `companionQq.sendImage` 另发的一条图片消息，方括号文字对 QQ 是纯噪声；`src/split.ts` 的 `stripMarkdown` 只剥 Markdown，不管它。
+- **改动①（出站剥标记）**：`src/qqsplit.ts` 新增 `MEME_MARKER_RE` / `stripMemeMarkers(text)`（连 `[表情: x](https://…)` 的网址一起剥，一行多枚全剥）；接入 `src/outbound.ts sendToChat`（与 `extractQqBlock` 同处：**审计看原文、发送看裁剪**）与 `src/interim.ts sendInterimSummary`；剥完为空走既有「正文为空，未发送」分支，不额外发明静默路径。`src/trace.ts` 新增 `TRACE_REASONS.outboundMemeOnly`。
+- **改动②（companionQq 可配）**：设置页新增布尔键 `companionQq`（behavior 组尾，默认 true）。同步 `src/settings-remote.ts`（`SETTINGS_GROUPS` / `SCHEMA_DEFAULTS` / `BOOLEAN_KEYS`）、`lib/client.js`（`GROUPS` 字段 + `DEFAULTS`），两处测试键数 29→30。语义即本 fork 的 `ctx.provide('companionQq', …)`：开着把服务挂给同进程插件（dsh-meme 发图），同时挂 dsh-companion-onebot 会同名冲突，须二选一。
+- **改动③（包名）**：`dsh-onebot-qq` → `Allira-onebot-qq`。cordis loader entry id（`dsh-onebot`）**不动**——profile patch 的 config 覆盖行按它寻址。同步：package.json（name/repository/homepage/bugs）、cordis.patch.yml 两条 `name`、`lib/client.js` 的 ModuleLoader `id` / `PLUGIN_ID` / `plugins.bundle.config` slot key（宿主按**包名**下发 client entry 且校验 bundle 注册 id，见 0.4.6 事故条目）、dsh.plugin.json 版本、tests/client-settings.spec.ts 五处。**注意：npm 新包名不允许大写**，此名只用于 link/私仓，不可 `npm publish`。
+- **验证**：`tsc -p tsconfig.json` exit 0；全量 vitest 40 文件 591 用例 → 25 failed / 557 passed / 9 skipped。25 条失败全部是**本机测试环境**既存问题（非本次改动）：t2i 卡片需 CJK 字体（bridge/interim/media-guard 组的卡片断言）、Windows TEMP 8.3 短名 `ADMINI~1` vs `Administrator`（commands/tools-gate）、并行负载下的 WS 时序 flake（inject，隔离单跑 11/11 绿）。`tests/qqsplit.spec.ts` 24/24、`tests/companion.spec.ts` + 设置两件 129/129 全绿。
+- **工具面副产物**：本仓 `.git` 曾损坏（缺 HEAD/index/config），已按 `refs/heads/main` 重建并 `git reset --mixed` 复原 index；`node_modules` 曾误删，按 pnpm 12.14.0 重装（`pnpm-lock.yaml` 的 autoInstallPeers 差异属重装噪声，已回滚不入库）。
