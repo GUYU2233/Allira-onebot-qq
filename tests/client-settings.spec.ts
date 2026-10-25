@@ -174,7 +174,7 @@ describe('T4 客户端 bundle — 四组 30 键（分组/键集/默认值 = T1 �
     expect(client.GROUP_KEYS).toEqual(SETTINGS_GROUPS)
     expect(groups.map((group) => group.id)).toEqual(['connection', 'permissions', 'behavior', 'diagnostics'])
     expect(allFields.map((field) => field.key).sort()).toEqual([...ALL_KEYS].sort())
-    expect(allFields).toHaveLength(30) // T2 26→27（newMessagePolicy）、T9 27→28（autoSteerPolicy）、T3 28→29（deferredTimeoutMs）
+    expect(allFields).toHaveLength(31) // T2 26→27（newMessagePolicy）、T9 27→28（autoSteerPolicy）、T3 28→29（deferredTimeoutMs）
   })
 
   it('默认值逐字对齐 host SCHEMA_DEFAULTS（重置按钮唯一来源）', () => {
@@ -232,7 +232,7 @@ describe('T4 客户端 bundle — 渲染函数模块级可测（renderGroup 纯�
     const titles = sections.map((section) => ((section.children[0] as StubElement).children[0] as string))
     expect(titles).toEqual(['连接', '权限', '行为', '诊断'])
     const fieldRows = sections.flatMap((section) => walk(section).filter((element) => element.type === 'div' && element.props.className === 'obx-field'))
-    expect(fieldRows).toHaveLength(30)
+    expect(fieldRows).toHaveLength(31)
   })
 
   it('控件类型齐备：6 枚举下拉 + 3 多行文本 + 12 布尔勾选 + 8 文本框 + 1 密码框（secret 另含清除勾选）', () => {
@@ -243,7 +243,7 @@ describe('T4 客户端 bundle — 渲染函数模块级可测（renderGroup 纯�
     expect(selects).toHaveLength(6) // 5 原有枚举（mode/dmPolicy/groupPolicy/unknownCommand/newMessagePolicy）+ T9 autoSteerPolicy
     expect(textareas).toHaveLength(3)
     expect(inputs.filter((input) => input.props.type === 'checkbox')).toHaveLength(12 + 1) // 12 布尔（5 原有 + 6 W6 + companionQq）+ secret 清除勾选
-    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(8) // host/port/url/botQQ/workspacePath（W7）+ interimRecallMs/rateLimitPerMinute + T3 deferredTimeoutMs（number 以文本框渲染）
+    expect(inputs.filter((input) => input.props.type === 'text')).toHaveLength(9) // host/port/url/botQQ/workspacePath（W7）+ interimRecallMs/rateLimitPerMinute + T3 deferredTimeoutMs（number 以文本框渲染）
     expect(inputs.filter((input) => input.props.type === 'password')).toHaveLength(1)
   })
 
@@ -766,6 +766,7 @@ describe('T6 批 3 — 数字行内校验（UX §5.6：blur 触发、非法标�
       interimRecallMs: [0, undefined],
       rateLimitPerMinute: [0, undefined],
       deferredTimeoutMs: [0, undefined],
+      groupQuietMs: [0, 15000],
     })
     expect(Object.keys(NUMBER_RANGE)).toEqual(allFields.filter((field) => field.type === 'number').map((field) => field.key))
     expect(CLIENT_SOURCE).toContain('src/settings-remote.ts L129-134') // 来源行号注明

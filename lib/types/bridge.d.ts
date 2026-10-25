@@ -84,6 +84,13 @@ export interface BridgeConfig {
      * 最终文字（「（超时补发）」前缀，走既有 outbound 管线）；absent →
      * 600000（保守 10 分钟），0 = 关闭超时补发。 */
     deferredTimeoutMs?: number;
+    /** 群消息「等平静」缓冲窗口（ms）：群聊消息先进 per-chat 缓冲，安静满该
+     * 时长后按到达顺序逐条进 processInbound；absent/0 = 关闭（每条立即处理，
+     * 与旧行为完全一致）；有效范围 500–15000（越界夹紧）。 */
+    groupQuietMs?: number;
+    /** 群消息缓冲的强制上限（ms，从第一条缓冲消息算起）：到点无论是否仍在
+     * 刷屏都立即 flush，避免连续消息让缓冲永远等不到安静；absent → 20000。 */
+    groupQuietMaxMs?: number;
 }
 /** W1 trace/config extensions: the observability knobs ride as optional
  * members (same pattern as the W2-②③ gate keys) so the declared BridgeConfig
@@ -286,6 +293,8 @@ export declare class ChatBridge {
     private pluginVersion;
     private pluginCommit;
     private stopping;
+    /** 群消息「等平静」缓冲表（per chat）；groupQuietMs<=0 时永不写入。 */
+    private readonly groupQuiet;
     constructor(deps: BridgeDeps);
     /** Start listening: wire connection handlers and the session event feed. */
     start(): void;
@@ -366,6 +375,21 @@ export declare class ChatBridge {
      * injected round (pipeline decisions + intercepted outbound calls) shares
      * one traceId in the trace stream. */
     private beginInboundTrace;
+    /** 生效的群消息静默窗口（ms）：0 = 关闭；>0 时夹紧到 500–15000。 */
+    private groupQuietWindowMs;
+    /** 生效的强制上限（ms）：缺省/非法 → 20000。 */
+    private groupQuietCapMs;
+    /** 群消息进缓冲区并（重新）起算静默定时器；到达第一条起算已满强制上限
+     * 时立刻 flush。flush 进行中追加的消息直接并入同一队列，不另起定时器。 */
+    private enqueueGroupQuiet;
+    /** 按到达顺序逐条重放缓冲区：每条单独 try/catch（一条失败不吞后面的），
+     * 全程不合并事件（媒体/引用解析都依赖单条 processInbound）。 */
+    private flushGroupQuiet;
+    /** 给已有缓冲重新起算静默定时器（flush 收尾后仍有新消息时用）。 */
+    private enqueueGroupQuietTimer;
+    /** 停止/销毁：清掉所有静默定时器并丢弃未处理队列（shutdown 之后不再
+     * processInbound，flush 循环见到 stopping 也会提前跳出）。 */
+    private stopGroupQuiet;
     private processInbound;
     /** Feed one user message into a chat's agent (create on demand). Records
      * the base text for /retry, queues the initiator's turn role, and applies

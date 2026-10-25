@@ -56,11 +56,11 @@ import type { WorkspaceRegistryLike } from './bridge.js'
 export const ENTRY_ID = 'dsh-onebot'
 /** Typert Remote 命名空间 = cordis 服务键（T1 §4）。 */
 export const NAMESPACE = 'onebotSettings'
-/** 快照固定值：30 键均为插件级热重启生效（T1 §5；W1/W2 新增 6 布尔键同粒度）。 */
+/** 快照固定值：31 键均为插件级热重启生效（T1 §5；W1/W2 新增 6 布尔键同粒度）。 */
 export const REMOTE_EFFECT = 'restart'
 
-/** 设置页 UI 四组 30 键（T1 §4 + T9 autoSteerPolicy + T3 deferredTimeoutMs；与 src/index.ts Config schema 一一对应）。
- *  W6：permissions/behavior 三组 19 键保持不动，W1/W2 的 6 个布尔键独立成
+/** 设置页 UI 四组 31 键（T1 §4 + T9 autoSteerPolicy + T3 deferredTimeoutMs + 群消息等平静 groupQuietMs；与 src/index.ts Config schema 一一对应）。
+ *  W6：permissions/behavior 两组 19 键保持不动，W1/W2 的 6 个布尔键独立成
  *  「diagnostics（诊断）」组——它们全部默认关（除 actionAuditEnabled 默认开）、
  *  属观测/调试面，与连接权限行为组的使用频率与风险等级都不同，独立分组让
  *  「默认全关的调试开关」一眼可辨（对齐竞品 v0.6.0 面板的开关分组话术）。
@@ -69,7 +69,7 @@ export const REMOTE_EFFECT = 'restart'
 export const SETTINGS_GROUPS: Readonly<Record<string, readonly string[]>> = {
   connection: ['mode', 'host', 'port', 'url', 'accessToken', 'botQQ', 'workspacePath'],
   permissions: ['requireMention', 'adminUsers', 'dmPolicy', 'groupPolicy', 'allowAllUsers', 'allowFrom', 'groupAllowFrom'],
-  behavior: ['interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'unknownCommand', 'rateLimitPerMinute', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'companionQq'],
+  behavior: ['interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'unknownCommand', 'rateLimitPerMinute', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'companionQq', 'groupQuietMs'],
   diagnostics: ['actionAuditEnabled', 'traceEnabled', 'recordInbound', 'inboxRedact', 'injectEnabled', 'injectDryRun'],
 }
 
@@ -105,6 +105,8 @@ export const SCHEMA_DEFAULTS: Readonly<Record<string, unknown>> = {
   // 阿莉拉二开：是否把 companionQq 服务挂给同进程的其它插件（dsh-meme 发图用）。
   // 默认开；同时挂 dsh-companion-onebot 会因同名 provide 冲突，须二选一。
   companionQq: true,
+  // 群消息「等平静」缓冲窗口（毫秒；0=关闭，群里每条消息立即处理）。
+  groupQuietMs: 0,
   // W6：W1/W2 可观测/调试布尔键（schema 默认值摘自 src/index.ts:297-317）。
   actionAuditEnabled: true,
   traceEnabled: false,
@@ -127,13 +129,15 @@ const ENUM_KEYS: Readonly<Record<string, readonly string[]>> = {
   // T9-B (用户裁决 2026-10-12)：admin=仅管理员（默认）；all=不限。
   autoSteerPolicy: ['admin', 'all'],
 }
-const NUMBER_KEYS: readonly string[] = ['port', 'interimRecallMs', 'rateLimitPerMinute', 'deferredTimeoutMs']
+const NUMBER_KEYS: readonly string[] = ['port', 'interimRecallMs', 'rateLimitPerMinute', 'deferredTimeoutMs', 'groupQuietMs']
 /** 数字键取值范围（评审 B4：port 1–65535、时长/频控 ≥0；越界在 Remote 层拒绝，不再只依赖宿主回滚兜底）。 */
 const NUMBER_RANGE: Readonly<Record<string, readonly [number, number | undefined]>> = {
   port: [1, 65535],
   interimRecallMs: [0, undefined],
   rateLimitPerMinute: [0, undefined],
   deferredTimeoutMs: [0, undefined],
+  // 群消息等平静窗口：0（关闭）或 500–15000 毫秒（与 src/index.ts groupQuietMs 说明一致）。
+  groupQuietMs: [0, 15000],
 }
 /** 布尔键白名单（T1 §4 + W6 扩展：W1/W2 观测/调试 6 键入列；顺序与
  *  SETTINGS_GROUPS.diagnostics 一致。数值键 dedupWindowSeconds/actionRatePerMinute/
@@ -146,7 +150,7 @@ const BOOLEAN_KEYS: readonly string[] = [
 ]
 const STRING_KEYS: readonly string[] = ['host', 'url', 'accessToken', 'botQQ', 'workspacePath']
 const STRING_ARRAY_KEYS: readonly string[] = ['adminUsers', 'allowFrom', 'groupAllowFrom']
-/** 全部 30 键（校验与快照的唯一键集；6 枚举 + 4 数字 + 12 布尔 + 5 字符串 + 3 字符串数组）。 */
+/** 全部 31 键（校验与快照的唯一键集；6 枚举 + 5 数字 + 12 布尔 + 5 字符串 + 3 字符串数组）。 */
 export const ALL_KEYS: readonly string[] = [
   ...Object.keys(ENUM_KEYS), ...NUMBER_KEYS, ...BOOLEAN_KEYS, ...STRING_KEYS, ...STRING_ARRAY_KEYS,
 ]
@@ -157,7 +161,7 @@ export interface OnebotSettingsSnapshot {
   revision: number
   /** dsh-onebot 条目 fiber 是否 active（fiber.state === 2，同 configEditor.edit 的活性判据）。 */
   entryActive: boolean
-  /** 28 键生效值；accessToken 脱敏为 ''。 */
+  /** 31 键生效值；accessToken 脱敏为 ''。 */
   config: Record<string, unknown>
   /** 脱敏键标记：明文是否已配置。 */
   secrets: Array<{ path: string[]; set: boolean }>
@@ -307,7 +311,7 @@ function resolveWorkspaceRegistry(ctx: { get(key: string): unknown } | undefined
   return registry !== undefined && registry !== null && typeof registry.list === 'function' ? registry : undefined
 }
 
-/** 28 键生效值 = schema 默认值 ← 条目 config 覆盖（T1 §3 合并优先级一句话）。 */
+/** 31 键生效值 = schema 默认值 ← 条目 config 覆盖（T1 §3 合并优先级一句话）。 */
 export function effectiveConfig(raw: Record<string, unknown>): Record<string, unknown> {
   const effective: Record<string, unknown> = {}
   for (const key of ALL_KEYS) {
@@ -336,7 +340,7 @@ function buildSnapshot(entry: ConfigEditorEntry, state: RevisionState): OnebotSe
   }
 }
 
-/** updateSettings 入参校验（T1 §4：28 键的任意子集，扁平 JSON）。未知键整单
+/** updateSettings 入参校验（T1 §4：31 键的任意子集，扁平 JSON）。未知键整单
  *  拒绝（不静默丢弃）；类型/枚举不符拒绝；具体取值合法性交由宿主 schemastery
  *  校验 + reconcile 失败自动回滚兜底（T1 §5）。 */
 export function validatePatch(patch: unknown): Record<string, unknown> {

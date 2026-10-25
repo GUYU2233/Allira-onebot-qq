@@ -943,3 +943,33 @@ agent，不能另开一个写句柄。
 - 做法：`scripts/ensure-dsh-meme-qq.mjs` —— 幂等、锚点校验、换行风格保留、先备份 `.bak-<版本>`，锚点对不上就报错退出绝不写坏文件；本插件 apply 时 `spawnSync` 跑一次，结果写进 `日志/companion-qq.log`。
 - 验证：拿上游 0.1.60 的原始文件（`.bak-before-late-qq`）在临时目录跑一遍，产出的 index.js / memes.js 与线上已打补丁的文件逐字节一致（忽略换行风格），二次运行正确跳过。
 - 注意：补丁是**下次启动**生效——重打发生在本次启动的 apply 里，那时 dsh-meme 的模块已经 import 过了。
+
+## 2026-10-26 阿莉拉二开：未闭合的 `[[qq]]` 不再退化成「全文照发」
+
+**现象**：顾羽说「还是没有 qq 和 web 发不一样的内容」。查会话日志（`~/.dsh/sessions/--E-ALLIRA--/onebot-private-2321697993-mvnsn94o/session.v4.jsonl.zstd`）里我自己的回复：`[[qq]]` 出现 9 次，`[[/qq]]` 只出现 3 次——**大多数回合我只写了开标记**。而旧语义是「有开标记但没闭合 → 不认块，剥掉裸标记后全文照发」，于是 QQ 收到的还是整篇 Web 正文。功能没坏，是我漏写结束标记时它会静默退化。
+
+**改法**（`src/qqsplit.ts`）：
+- 找不到成对块时，再找**独占一行**的开标记（`UNCLOSED_OPEN_RE = /^[ \t]*\[\[qq\]\][ \t]*$/gm`，取最后一个），标记之后到结尾的内容算作 QQ 段（`hasBlock: true`），段内残留的 `[[qq]]`/`[[/qq]]` 照样剥掉。
+- 为什么要求独占一行：正文里顺口提到「把这段包进 `[[qq]]`」不该劫持整段（原有用例 `'这里提到 [[qq]] 但没写全'` 就是这种情况，现在仍然 `hasBlock: false`）。
+- 语义表同步改在模块头注释里。
+
+**验证**：`tests/qqsplit.spec.ts` 26 个用例全绿（新增：未闭合按段内处理、未闭合但段内有配对块时配对块优先、完全没有开标记时全文照发）；`tsc` 退出 0。`tests/outbound.spec.ts` 的 t2i 卡片用例仍失败——既有环境问题（缺 CJK 字体），与本次无关。
+
+**教训**：出站分词这种「模型自己写的标记」，要把模型最常见的笔误当成主路径来设计，而不是当成边界情况。
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.7：群消息「等平静」缓冲
+
+**动机**：顾羽说「qq 群有消息先等待平静下来后判断是否回复，不吵到群里的其他人」。群聊里别人还在刷屏时每条消息都开一轮 agent 回合，本身就是打断——提示词管不了「什么时候被叫醒」，所以要做 code 层的 debounce。
+
+**实现**：
+- `src/index.ts`：config 加 `groupQuietMs`（默认 0 = 关闭，有效 500–15000，越界夹紧）与 `groupQuietMaxMs`（默认 20000）。
+- `src/bridge.ts`：`handleInboundOnce` 在 `normalizeOneBot11` 之后、`processInbound` 之前分流 —— `!injected && inbound.kind === 'group' && groupQuietWindowMs() > 0` 时进 per-chat 缓冲（`Map<ChatId, GroupQuietBuffer>`）。`enqueueGroupQuiet` 每条重置静默定时器、从第一条起算满上限则立刻 flush；`flushGroupQuiet` 顺序逐条 `processInbound`，每条单独 try/catch；flush 期间到达的消息并入同一队列（不并发、不丢）；`stop()` 首行 `stopGroupQuiet()` 清定时器丢队列，flush 循环见 `stopping` 提前退出。
+- `src/settings-remote.ts` + `lib/client.js`：设置页 behavior 组第 31 个键 `groupQuietMs`（数字，0–15000），前后端 NUMBER_RANGE 同范围。
+- `tests/group-quiet.spec.ts`：7 例（假定时器；0=关闭立即处理 / 满窗口才处理 / 中途来消息重置并按序不重复 / 到上限强制 flush / 私聊不受影响 / 一条抛错不影响后续 / stop 清定时器且不再处理）。
+
+**取舍**：
+- 顺序重放而非合并成一条事件：媒体、引用、forward 解析与 dedup 窗口都依赖单条 `processInbound`，合并会改变语义。
+- 注入事件（`injected`）不缓冲：注入轮次是离线调试的同步链。
+- 缓冲期只加 debug 日志，不动 trace 契约。
+
+**验证**：`tsc` exit 0；`vitest run tests/group-quiet.spec.ts tests/settings-remote.spec.ts tests/client-settings.spec.ts tests/qqsplit.spec.ts tests/companion.spec.ts` → 5 files / 138 tests 全绿。全量套件 24 个失败均为既有环境问题（t2i 缺 CJK 字体、Windows 8.3 短路径）。

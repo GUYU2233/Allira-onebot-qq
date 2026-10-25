@@ -113,6 +113,24 @@ export interface BridgeConfig {
    * 最终文字（「（超时补发）」前缀，走既有 outbound 管线）；absent →
    * 600000（保守 10 分钟），0 = 关闭超时补发。 */
   deferredTimeoutMs?: number
+  /** 群消息「等平静」缓冲窗口（ms）：群聊消息先进 per-chat 缓冲，安静满该
+   * 时长后按到达顺序逐条进 processInbound；absent/0 = 关闭（每条立即处理，
+   * 与旧行为完全一致）；有效范围 500–15000（越界夹紧）。 */
+  groupQuietMs?: number
+  /** 群消息缓冲的强制上限（ms，从第一条缓冲消息算起）：到点无论是否仍在
+   * 刷屏都立即 flush，避免连续消息让缓冲永远等不到安静；absent → 20000。 */
+  groupQuietMaxMs?: number
+}
+
+/** 群消息「等平静」的缓冲状态（per chat）：消息按到达顺序排队的队列、
+ * 第一条的到达时间（强制上限的起算点）、空闲定时器、以及「正在 flush」
+ * 标记（flush 期间追加的消息并入同一队列，由同一循环顺序处理，不并发、
+ * 不丢消息）。 */
+interface GroupQuietBuffer {
+  items: NormalizedInbound[]
+  firstAt: number
+  timer: ReturnType<typeof setTimeout> | undefined
+  flushing: boolean
 }
 
 /** W1 trace/config extensions: the observability knobs ride as optional
@@ -304,6 +322,8 @@ export class ChatBridge {
   private pluginVersion: string | undefined
   private pluginCommit: string | undefined
   private stopping = false
+  /** 群消息「等平静」缓冲表（per chat）；groupQuietMs<=0 时永不写入。 */
+  private readonly groupQuiet = new Map<ChatId, GroupQuietBuffer>()
 
   constructor(deps: BridgeDeps) {
     this.deps = deps
@@ -427,6 +447,8 @@ export class ChatBridge {
   /** Stop everything: dispose agents, save mapping, cancel timers. */
   async stop(): Promise<void> {
     this.stopping = true
+    // 群消息等平静：先清定时器、丢弃待处理队列，避免 stop 之后还有回合被拉起。
+    this.stopGroupQuiet()
     if (this.sessionEventOff !== undefined) {
       this.sessionEventOff()
       this.sessionEventOff = undefined
@@ -581,6 +603,13 @@ export class ChatBridge {
           scope?.emit('normalize', { ok: false, reason: TRACE_REASONS.inboundNotChat })
           return
         }
+        // 群消息「等平静」：群聊且开启缓冲窗口时先进 per-chat 队列，等安静
+        // 满 groupQuietMs 再按到达顺序逐条处理（注入事件不走缓冲——它属于
+        // 注入轮次，本身就是离线调试的同步链）。
+        if (!injected && inbound.kind === 'group' && this.groupQuietWindowMs() > 0) {
+          this.enqueueGroupQuiet(inbound)
+          return
+        }
         await this.processInbound(inbound)
       })
     } catch (error) {
@@ -608,6 +637,113 @@ export class ChatBridge {
     const scope = sink.scope(traceId, chatId, messageId)
     sink.emit({ traceId: scope.traceId, stage: 'inbound', ok: true, chatId, messageId, data: { messageType: String(event.message_type ?? '') } })
     return scope
+  }
+
+  /** 生效的群消息静默窗口（ms）：0 = 关闭；>0 时夹紧到 500–15000。 */
+  private groupQuietWindowMs(): number {
+    const raw = this.deps.config.groupQuietMs ?? 0
+    if (!Number.isFinite(raw) || raw <= 0) return 0
+    return Math.min(Math.max(raw, 500), 15_000)
+  }
+
+  /** 生效的强制上限（ms）：缺省/非法 → 20000。 */
+  private groupQuietCapMs(): number {
+    const raw = this.deps.config.groupQuietMaxMs ?? 20_000
+    return Number.isFinite(raw) && raw > 0 ? raw : 20_000
+  }
+
+  /** 群消息进缓冲区并（重新）起算静默定时器；到达第一条起算已满强制上限
+   * 时立刻 flush。flush 进行中追加的消息直接并入同一队列，不另起定时器。 */
+  private enqueueGroupQuiet(inbound: NormalizedInbound): void {
+    const chatId = inbound.chatId
+    const now = Date.now()
+    let buf = this.groupQuiet.get(chatId)
+    if (buf === undefined) {
+      buf = { items: [], firstAt: now, timer: undefined, flushing: false }
+      this.groupQuiet.set(chatId, buf)
+    }
+    buf.items.push(inbound)
+    if (buf.flushing) {
+      this.deps.log('debug', '群消息等平静：处理中收到新消息，并入当前队列（chat=' + chatId + '，待处理 ' + buf.items.length + ' 条）')
+      return
+    }
+    if (buf.timer !== undefined) {
+      clearTimeout(buf.timer)
+      buf.timer = undefined
+    }
+    if (now - buf.firstAt >= this.groupQuietCapMs()) {
+      this.deps.log('debug', '群消息等平静：已到强制上限 ' + this.groupQuietCapMs() + ' ms，立即处理 ' + buf.items.length + ' 条（chat=' + chatId + '）')
+      void this.flushGroupQuiet(chatId)
+      return
+    }
+    this.enqueueGroupQuietTimer(chatId, buf)
+  }
+
+  /** 按到达顺序逐条重放缓冲区：每条单独 try/catch（一条失败不吞后面的），
+   * 全程不合并事件（媒体/引用解析都依赖单条 processInbound）。 */
+  private async flushGroupQuiet(chatId: ChatId): Promise<void> {
+    const buf = this.groupQuiet.get(chatId)
+    if (buf === undefined || buf.flushing) return
+    buf.flushing = true
+    if (buf.timer !== undefined) {
+      clearTimeout(buf.timer)
+      buf.timer = undefined
+    }
+    const waitedMs = Date.now() - buf.firstAt
+    let handled = 0
+    try {
+      while (buf.items.length > 0) {
+        if (this.stopping) {
+          buf.items.length = 0
+          break
+        }
+        const inbound = buf.items.shift() as NormalizedInbound
+        try {
+          await this.processInbound(inbound)
+        } catch (error) {
+          this.deps.log('error', 'inbound handling failed: ' + describeError(error) + errorStack(error))
+        }
+        handled += 1
+      }
+    } finally {
+      buf.flushing = false
+      const finished = buf.items.length === 0
+      if (finished || this.stopping) {
+        buf.items.length = 0
+        this.groupQuiet.delete(chatId)
+      } else {
+        // flush 中又到的消息：静默窗口重新起算（强制上限同样从此刻重新计）。
+        buf.firstAt = Date.now()
+        this.enqueueGroupQuietTimer(chatId, buf)
+      }
+      this.deps.log('debug', '群消息等平静：处理 ' + handled + ' 条（chat=' + chatId + '，等了 ' + waitedMs + ' ms）')
+    }
+  }
+
+  /** 给已有缓冲重新起算静默定时器（flush 收尾后仍有新消息时用）。 */
+  private enqueueGroupQuietTimer(chatId: ChatId, buf: GroupQuietBuffer): void {
+    if (buf.timer !== undefined || this.stopping) return
+    buf.timer = setTimeout(() => {
+      const current = this.groupQuiet.get(chatId)
+      if (current !== undefined) current.timer = undefined
+      void this.flushGroupQuiet(chatId)
+    }, this.groupQuietWindowMs())
+  }
+
+  /** 停止/销毁：清掉所有静默定时器并丢弃未处理队列（shutdown 之后不再
+   * processInbound，flush 循环见到 stopping 也会提前跳出）。 */
+  private stopGroupQuiet(): void {
+    for (const [chatId, buf] of this.groupQuiet) {
+      if (buf.timer !== undefined) {
+        clearTimeout(buf.timer)
+        buf.timer = undefined
+      }
+      if (buf.items.length > 0) {
+        this.deps.log('debug', '群消息等平静：停止时丢弃未处理 ' + buf.items.length + ' 条（chat=' + chatId + '）')
+      }
+      buf.items.length = 0
+    }
+    this.groupQuiet.clear()
   }
 
   private async processInbound(inbound: NormalizedInbound): Promise<void> {

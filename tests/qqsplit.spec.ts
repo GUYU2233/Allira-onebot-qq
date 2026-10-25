@@ -54,11 +54,24 @@ describe('extractQqBlock（纯函数）', () => {
     expect(r.body).toBe('')
   })
 
-  it('开块未闭合：不认块，剥掉裸标记后全文照发（保守，宁可多发）', () => {
+  it('开块未闭合：开标记之后的全部算段内（漏写结束标记不再退化成全文）', () => {
     const r = extractQqBlock('正文\n[[qq]]\n没闭合的半截')
-    expect(r.hasBlock).toBe(false)
-    expect(r.body).toBe('正文\n\n没闭合的半截')
+    expect(r.hasBlock).toBe(true)
+    expect(r.body).toBe('没闭合的半截')
   })
+
+  it('开块未闭合、段内又有配对块：配对块优先', () => {
+    const r = extractQqBlock('Web\n[[qq]]\n正式段\n[[/qq]]\n尾巴')
+    expect(r.hasBlock).toBe(true)
+    expect(r.body).toBe('正式段')
+  })
+
+  it('完全没有开标记：全文照发，只剥裸标记', () => {
+    const r = extractQqBlock('正文\n[[/qq]]')
+    expect(r.hasBlock).toBe(false)
+    expect(r.body).toBe('正文\n')
+  })
+
 
   it('块外的裸闭标记也被剥掉', () => {
     const r = extractQqBlock('[[qq]]段内[[/qq]] 尾巴 [[/qq]]')

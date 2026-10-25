@@ -122,6 +122,10 @@ export interface Config {
   groupPolicy: 'open' | 'allowlist' | 'disabled'
   allowFrom: string[]
   groupAllowFrom: string[]
+  /** 群消息「等平静」缓冲窗口（毫秒）：群聊消息先进缓冲，安静满该时长后再按到达顺序处理；0 = 关闭（每条立即处理）。有效范围 500–15000。 */
+  groupQuietMs: number
+  /** 群消息缓冲的强制上限（毫秒，从第一条缓冲消息算起）：到点无论是否仍在刷屏都立即处理；仅 groupQuietMs > 0 时生效。 */
+  groupQuietMaxMs: number
   adminUsers: string[]
   allowAllUsers: boolean
   ignoreSelf: boolean
@@ -249,6 +253,10 @@ export const Config: Z<Config> = z.object({
     .description('dmPolicy=allowlist 时允许私聊的 QQ 号'),
   groupAllowFrom: z.array(z.string()).default([])
     .description('groupPolicy=allowlist 时允许的群号'),
+  groupQuietMs: z.number().default(0)
+    .description('群消息等平静：群聊消息先进缓冲，安静满该时长后按到达顺序逐条处理，让模型有机会判断要不要说话；0=关闭（每条立即处理）；有效范围 500–15000 毫秒'),
+  groupQuietMaxMs: z.number().default(20_000)
+    .description('群消息等平静的强制上限（毫秒，从第一条缓冲消息算起）：到点无论是否仍在刷屏都立即处理，防止连续消息让缓冲永远等不到安静；仅 groupQuietMs>0 时生效'),
   adminUsers: z.array(z.string()).default([])
     .description('管理员 QQ 号（也可用环境变量 ONEBOT_ALLOWED_USERS 逗号分隔指定）'),
   allowAllUsers: z.boolean().default(false)
@@ -519,6 +527,8 @@ export function apply(ctx: Context, config: Config): void {
       botQQ: config.botQQ,
       ignoreSelf: config.ignoreSelf,
       requireMention: config.requireMention,
+      groupQuietMs: config.groupQuietMs,
+      groupQuietMaxMs: config.groupQuietMaxMs,
       unknownCommand: config.unknownCommand,
       newMessagePolicy: config.newMessagePolicy,
       autoSteerPolicy: config.autoSteerPolicy,
