@@ -40,6 +40,7 @@ let InboundRecorder: typeof import('./record.js').InboundRecorder
 let InjectChannel: typeof import('./inject.js').InjectChannel
 let redactSnapshot: typeof import('./health.js').redactSnapshot
 let describeError: typeof import('./errors.js').describeError
+let createCompanionQq: typeof import('./companion.js').createCompanionQq
 
 try {
   ;({ default: z } = await import('@deepseek-ai/schemastery'))
@@ -52,6 +53,7 @@ try {
   ;({ InjectChannel } = await import('./inject.js'))
   ;({ redactSnapshot } = await import('./health.js'))
   ;({ describeError } = await import('./errors.js'))
+  ;({ createCompanionQq } = await import('./companion.js'))
 } catch (error) {
   console.error('[dsh-onebot] 挂载失败：peer 依赖解析失败或关键模块缺失 —— 部署副本必须带完整 node_modules 链接集（scripts/link-host.sh 产物），只复制 lib/ 不够。原始错误：' + (error instanceof Error ? error.message : String(error)))
   throw error
@@ -182,6 +184,10 @@ export interface Config {
   injectDryRun: boolean
   /** W1/T5: inject queue poll interval in ms (min 500). */
   injectIntervalMs: number
+  /** 阿莉拉二开（T-A2）：provide `companionQq` 服务，给 dsh-meme 的 send_meme
+   * 提供 QQ 原生图片出口（复用本插件已有的连接，不另开 WS）。装上本插件后
+   * 必须停用 dsh-companion-onebot —— 两个同名 provide 会撞。 */
+  companionQq: boolean
   /** Console log gate: messages below this level are dropped (debug < info < warn < error). */
   logLevel: 'debug' | 'info' | 'warn' | 'error'
 }
@@ -330,6 +336,8 @@ export const Config: Z<Config> = z.object({
     .description('注入干跑（W1）：true（默认，强烈建议保持）=注入回合触发的全部出站写操作（发消息/撤回等，含异步模型回合的最终回复——拦截点在出站动作层）被拦截计数、原文进 trace 事件、绝不真发 QQ；false=注入内容会真实发送，仅限隔离环境实验'),
   injectIntervalMs: z.number().default(2000)
     .description('注入队列轮询间隔（毫秒，W1；最小 500）'),
+  companionQq: z.boolean().default(true)
+    .description('companionQq 服务（阿莉拉二开）：给 dsh-meme 的 send_meme 提供 QQ 原生图片出口，复用本插件已有的 NapCat 连接（不另开 WS），发送走主动写闸与审计。默认开启；开启时必须停用 dsh-companion-onebot，否则同名服务冲突'),
   logLevel: z.union([z.const('debug'), z.const('info'), z.const('warn'), z.const('error')]).default('info')
     .description('控制台日志级别门槛（debug < info < warn < error）：低于该级别的日志不输出。debug=全部输出（含「session 事件早退」等调试行）；info=常规信息（启动、连接建立、meta 事件等，默认）；warn=仅警告与错误；error=仅错误'),
 })
@@ -548,6 +556,40 @@ export function apply(ctx: Context, config: Config): void {
   // returned reference to its own log line, so host logs and qq-trace.jsonl
   // share the same number for one fault.
   connection.onFailure = (stage: string, detail: string): string => bridge.registerConnectionFailure(stage, detail)
+
+  // 阿莉拉二开（T-A2）：把 dsh-meme 的 send_meme 接到本插件这条连接上。
+  // 原先由独立插件 dsh-companion-onebot 自己再开一条 WS 顶上——同一个 NapCat、
+  // 同一批聊天，却绕过了主动写闸、审计和工作区 trace。搬进来之后必须停用那个
+  // 独立插件：两个同名 provide 会撞（cordis 会报重复 provide）。
+  if (config.companionQq) {
+    const companionQq = createCompanionQq({
+      connected: () => connection.connected,
+      chatForSession: sessionId => bridge.chatForSession(sessionId),
+      mostRecentChat: () => bridge.mostRecentChat(),
+      currentSessionId: () => {
+        // send_meme 只把文件路径递过来，不带工具执行上下文，所以只能问「现在
+        // 哪个 agent 在跑工具」。拿不到（不在回合里 / 老宿主没这 API）就返回
+        // undefined，让 targetChat() 退回最活跃的聊天。
+        try {
+          const session = ctx.agents.currentInitiator()?.session as { id?: unknown } | undefined
+          return typeof session?.id === 'string' ? session.id : undefined
+        } catch {
+          return undefined
+        }
+      },
+      sendSegments: (chatId, segments) => bridge.sendSegments(chatId, segments),
+      maxImageBytes: config.outboundImageMaxBytes,
+      log,
+    })
+    ctx.effect(() => {
+      const dispose = ctx.provide('companionQq', companionQq)
+      // dsh-meme 先 ctx.get('companionQq')，拿不到就挂着等这个事件补注册；
+      // 所以必须先 provide 再广播。
+      ctx.emit('companionQq/available')
+      log('info', 'companionQq 已挂载：send_meme 走本插件的 QQ 连接（记得停用 dsh-companion-onebot）')
+      return dispose
+    }, 'dsh-onebot.companionQq')
+  }
 
   // Lifecycle: start the bridge and transport; unwind everything on unload.
   ctx.effect(() => {

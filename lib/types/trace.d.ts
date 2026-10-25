@@ -72,6 +72,8 @@ export declare const TRACE_REASONS: {
     readonly outboundSensitive: "出站内容命中敏感词审计";
     readonly outboundCardTooLarge: "文字图卡片超过大小上限，已降级为文本";
     readonly outboundEmptyText: "正文为空，未发送";
+    readonly outboundQqBlock: "回复含 [[qq]] 段，QQ 只发段内内容";
+    readonly outboundSilent: "模型选择静默（[[qq_silent]]）";
     readonly noticeErrorSendFailed: "错误通知发送失败";
     readonly deferredRegistered: "等待模型回复超时，已登记超时补发跟踪";
     readonly deferredDelivered: "超时补发：回合完成，最终结果已补发";

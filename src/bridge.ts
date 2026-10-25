@@ -446,6 +446,25 @@ export class ChatBridge {
     return this.bySession.get(sessionId)
   }
 
+  /** Most-recently-active chat. Fallback target for senders that only know a
+   * file (the `companionQq` image channel behind send_meme, which receives a
+   * path and nothing else). Undefined when no chat has been seen yet — the
+   * caller reports that instead of guessing a chat.
+   * @returns the chat with the largest `lastActivityAt`, or undefined.
+   */
+  mostRecentChat(): ChatId | undefined {
+    let best: ChatId | undefined
+    let bestAt = Number.NEGATIVE_INFINITY
+    for (const [chatId, chat] of this.chats) {
+      const at = chat.lastActivityAt ?? 0
+      if (at > bestAt) {
+        bestAt = at
+        best = chatId
+      }
+    }
+    return best
+  }
+
   /** Whether a caller backing an agent session may perform file edits. QQ chats
    * require the currently running turn's initiator to be an admin (role frozen
    * from the dispatch queue at turn/start); non-QQ sessions (Web and other

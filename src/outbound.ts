@@ -17,6 +17,7 @@ import type { ChatId } from './chat.js'
 import { splitChatId } from './chat.js'
 import { OneBotActionError, OneBotNotConnectedError } from './connection.js'
 import { extractForwardBlocks, scanSensitive, stripMarkdown } from './split.js'
+import { extractQqBlock, SILENT_MARKER_RE } from './qqsplit.js'
 import { renderTextImage } from './t2i/index.js'
 import { describeError } from './errors.js'
 import { TRACE_REASONS } from './trace.js'
@@ -127,25 +128,54 @@ export class OutboundPipeline {
    * @returns the sent message ids.
    */
   sendToChat(chatId: ChatId, text: string, options: SendOptions = {}): Promise<string[]> {
+    // 静默标记（阿莉拉二开）：整条消息去空白后恰好是 [[qq_silent]] 时，本轮一个字
+    // 都不发。模型用它表达「这条群消息我不接」——语义与「正文为空」一致，所以走
+    // 同一处早退；最终回复与中间文本都经过这里，一处拦截全覆盖。
+    if (SILENT_MARKER_RE.test(text)) {
+      this.ctx.log('debug', '模型选择静默，未发送: ' + chatId)
+      this.ctx.trace?.(chatId, { stage: 'outbound', ok: true, reason: TRACE_REASONS.outboundSilent })
+      return Promise.resolve([])
+    }
+    // [[qq]] 段（阿莉拉二开）：回复里包了 [[qq]]…[[/qq]] 时 QQ 只发段内内容，Web
+    // 照旧看到全文。裁剪放在整条链的最前面——离线队列、forward 解析、t2i、
+    // Markdown 剥壳全部只认这一段，语义与「模型本来只写了这一段」完全一致。
+    const { hasBlock, body: qqBody } = extractQqBlock(text)
+    if (hasBlock) {
+      if (qqBody === '') {
+        // 空段 = 静默（与 [[qq_silent]] 同一语义，见 qqsplit 模块说明）。
+        this.ctx.log('debug', '[[qq]] 段为空，QQ 未发送: ' + chatId)
+        this.ctx.trace?.(chatId, { stage: 'outbound', ok: true, reason: TRACE_REASONS.outboundSilent })
+        return Promise.resolve([])
+      }
+      this.ctx.trace?.(chatId, {
+        stage: 'outbound',
+        ok: true,
+        reason: TRACE_REASONS.outboundQqBlock,
+        data: { webChars: text.length, qqChars: qqBody.length },
+      })
+    }
+    const outboundText = hasBlock ? qqBody : text
     return this.enqueue(chatId, async () => {
       if (!this.ctx.connected()) {
         if (options.queuable === true) {
           // pipeline-hooks.md #23: the park used to be silent.
           this.ctx.log('debug', '连接断开，回复已排队等待重连补发: ' + chatId)
           this.ctx.trace?.(chatId, { stage: 'queue', ok: true, reason: TRACE_REASONS.outboundQueued })
-          this.queuePendingSend(chatId, text)
+          this.queuePendingSend(chatId, outboundText)
           return []
         }
         this.ctx.trace?.(chatId, { stage: 'outbound', ok: false, reason: TRACE_REASONS.outboundNotConnected })
         throw new OneBotNotConnectedError()
       }
+      // 审计的是模型产出的全文（不是裁过的 QQ 段）：[[qq]] 的 Web 半边同样是
+      // 一个投递面，软审计宁可多报。裁剪只影响「发什么」，不影响「审什么」。
       const hits = scanSensitive(text, this.ctx.config.sensitivePatterns)
       if (hits.length > 0) {
         this.ctx.log('warn', 'sensitive outbound audit for ' + chatId + ': ' + hits.join(', '))
         this.ctx.trace?.(chatId, { stage: 'outbound', ok: true, reason: TRACE_REASONS.outboundSensitive, data: { hits: hits.slice(0, 5) } })
       }
       const ids: string[] = []
-      const { body, nodes } = extractForwardBlocks(text, '助手')
+      const { body, nodes } = extractForwardBlocks(outboundText, '助手')
       if (nodes.length > 0) {
         // Passive reply path: [[qq_forward]] blocks inside a turn reply are
         // NOT gated as proactive writes (see the W2-③ 口径 note).

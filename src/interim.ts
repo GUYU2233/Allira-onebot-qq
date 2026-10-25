@@ -23,6 +23,7 @@ import type { ChatId } from './chat.js'
 import type { OutboundSegment, SendOptions } from './outbound.js'
 import { renderTextImage } from './t2i/index.js'
 import { describeError } from './errors.js'
+import { extractQqBlock, SILENT_MARKER_RE } from './qqsplit.js'
 
 /** Spacing between recall delete_msg calls (NapCat recallMsg is slow; bursting
  * them pushes borderline-late recalls over the server timeout). */
@@ -263,7 +264,19 @@ export class InterimTracker {
 
   /** Render this turn's interims into one t2i image (summary card, before final). */
   private async sendInterimSummary(chatId: ChatId, buf: Array<{ id: string; text: string }>): Promise<void> {
-    const body = buf.filter(item => item.text.trim() !== '').map((item, index) => (index + 1) + '. ' + item.text.trim()).join('\n\n')
+    // 阿莉拉二开（T-A1）：中间记录卡直接渲染 t2i，不经过 sendToChat 的裁剪，
+    // 所以这里自己走一遍同样的口径——只留 [[qq]] 段、丢掉静默条目、剥掉裸标记。
+    // 否则卡片上会把 `[[qq]]` 标记原样画出来。
+    const body = buf
+      .map(item => {
+        if (SILENT_MARKER_RE.test(item.text)) return ''
+        const { hasBlock, body: qqBody } = extractQqBlock(item.text)
+        return hasBlock ? qqBody : item.text
+      })
+      .map(text => text.trim())
+      .filter(text => text !== '')
+      .map((text, index) => (index + 1) + '. ' + text)
+      .join('\n\n')
     if (body === '') return
     let png: Buffer
     try {

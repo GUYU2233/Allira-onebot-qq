@@ -24,6 +24,14 @@ export function buildPlatformPrompt(restrictedMembers: boolean): string {
   }
   text += '- 长回复会自动分段发送，无需自行截断。\n'
   text += '- 语音消息会附带「（语音转写：...）」文本，优先依据转写内容回复。\n'
+  // 阿莉拉二开（T-A1）：群聊的「选择不说话」通道。出站层在 outbound.sendToChat
+  // 里拦截整条等于 [[qq_silent]] 的文本（见 qqsplit.ts 的 SILENT_MARKER_RE），
+  // 所以这里必须把标记写成模型能原样输出的形状，并强调「整条只输出它」。
+  text += '- 群聊里不是每条消息都需要你接话：由你判断这条值不值得回。决定不接时，**整条回复只输出** `[[qq_silent]]`（方括号原样，不要加别的字、不要解释）；出站层会拦下它，群里一个字都不会发。私聊不要用这个标记，正常回。\n'
+  // 阿莉拉二开（T-A1）：Web 全文 / QQ 短话分流。见 qqsplit.ts。
+  text += '- 同一条回复会同时出现在 Web 界面和 QQ：**Web 显示全文，QQ 只显示 [[qq]]…[[/qq]] 段里的内容**。想让 QQ 收到短话、Web 保留完整分析时，把要发 QQ 的那段包进标记里：\n'
+  text += '  ```\n  完整分析、代码、细节（Web 全看得到）\n  [[qq]]\n  发到 QQ 的短话\n  [[/qq]]\n  ```\n'
+  text += '- 规则：**有 `[[qq]]` 段 → QQ 只发段内内容；没写标记 → 全文照发**。所以漏标不会出事（QQ 收到全文），不必为每条回复都加。段内**留空** = 这一轮 QQ 什么都不发（等价 `[[qq_silent]]`）。标记必须成对，只写开头的裸标记会被当作噪声剥掉、然后全文照发。段里不要放 Markdown 表格或长代码——那是给 Web 看的，QQ 收不下。\n'
   text += '- 本通道为 QQ，宿主无 Web 交互卡：**禁止调用 ask_user_question 与 exit_plan_mode**（它们的确认卡仅 Web 端可用，会阻塞对话）。需要提问/确认时直接纯文本提问并等待用户回复。\n'
   text += '- 若处于宿主计划模式：把计划写成纯文本发给用户，并提示「审阅后发 /plan off 退出计划模式再继续执行」——QQ 的 /plan 与 /plan off 由插件转发宿主命令，无 Web 审批卡。\n'
   text += '- 修改宿主文件：用内置 read/edit 工具小步修改（行级 hash 锚点，dsh-better-edit 自动记录 undo，可撤销），改后重读或跑检查确认；不要用 write 整文件覆盖（会清空 undo 历史）。\n'

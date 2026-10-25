@@ -5,7 +5,7 @@
  * @module dsh-onebot/tests/commands
  */
 import { describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdtempSync, readFileSync, realpathSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,8 +15,11 @@ import { MediaStore } from '../src/media.js'
 import { makeCmdHarness } from './helpers/bridge-harness.js'
 
 describe('commands', () => {
-  it('packageVersion resolves 0.9.6 under ESM (no "?")', () => {
-    expect(packageVersion()).toBe('0.9.6')
+  it('packageVersion 解析到 package.json 的真版本（不能是 "?"）', () => {
+    // 不写死版本号：二开分支在自己的 package.json 里改版本（0.9.7-allira.N），
+    // 断言口径是「ESM 下能读到真版本」而不是某一个具体数字。
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+    expect(packageVersion()).toBe(pkg.version)
   })
 
   it('routes slash commands before the model: /new opens a fresh session', async () => {

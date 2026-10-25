@@ -184,6 +184,10 @@ export interface Config {
     injectDryRun: boolean;
     /** W1/T5: inject queue poll interval in ms (min 500). */
     injectIntervalMs: number;
+    /** 阿莉拉二开（T-A2）：provide `companionQq` 服务，给 dsh-meme 的 send_meme
+     * 提供 QQ 原生图片出口（复用本插件已有的连接，不另开 WS）。装上本插件后
+     * 必须停用 dsh-companion-onebot —— 两个同名 provide 会撞。 */
+    companionQq: boolean;
     /** Console log gate: messages below this level are dropped (debug < info < warn < error). */
     logLevel: 'debug' | 'info' | 'warn' | 'error';
 }

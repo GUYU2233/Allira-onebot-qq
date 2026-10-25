@@ -293,6 +293,13 @@ export declare class ChatBridge {
     stop(): Promise<void>;
     /** Map an agent session id back to its chat (for model tools). */
     chatForSession(sessionId: string): ChatId | undefined;
+    /** Most-recently-active chat. Fallback target for senders that only know a
+     * file (the `companionQq` image channel behind send_meme, which receives a
+     * path and nothing else). Undefined when no chat has been seen yet — the
+     * caller reports that instead of guessing a chat.
+     * @returns the chat with the largest `lastActivityAt`, or undefined.
+     */
+    mostRecentChat(): ChatId | undefined;
     /** Whether a caller backing an agent session may perform file edits. QQ chats
      * require the currently running turn's initiator to be an admin (role frozen
      * from the dispatch queue at turn/start); non-QQ sessions (Web and other
