@@ -1,0 +1,10 @@
+# 统一按 LF 入库。上游仓库没有这个文件，Windows 上 checkout 会把源码转成
+# CRLF，于是「编译产物 vs 入库产物」的对比全是行尾假差异——分不清是真改动
+# 还是换行符。固定成 LF 之后，diff 才是可信的。
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

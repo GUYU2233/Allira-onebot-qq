@@ -6,3 +6,6 @@ profiles/
 .expert-bus/
 lib/*.bak-*
 
+
+# fork 本机的临时产物
+*.bak-*
