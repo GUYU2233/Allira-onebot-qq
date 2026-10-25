@@ -240,6 +240,15 @@ export declare class ChatRegistry {
     private restoreEvictedSettings;
     /** Resume persisted chats from the mapping file (best-effort). */
     loadMapping(): Promise<void>;
+    /** Resume a persisted session, or — when another owner (Web GUI / 另一个
+     * 入口) already holds its write handle — borrow that live agent.
+     *
+     * 一个 Session 同时只能有一个写句柄（SessionAlreadyOwnedError）。宿主自己的
+     * ACP/Web 层遇到这个错误时会退到 `agents.get(id)` 复用已经活着的 agent，本
+     * 插件照做：QQ 侧接上同一个 live agent，于是 Web 和 QQ 说的是同一个上下文。
+     * 借来的 handle 的 dispose 是 no-op —— 那个 agent 的生命周期归持有写句柄的
+     * 那一方，我们不能在这里销毁它。 */
+    private resumeOrAdopt;
     /** Resume one persisted chat from its recorded session id (shared by
      * loadMapping and the B8c evicted-chat resume). */
     private resumeChat;

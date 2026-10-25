@@ -909,3 +909,31 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 
 教训：**改 `~/.dsh/media/onebot/*.json` 这类插件自有状态文件，必须在插件不运行时改，
 否则会被 shutdown 时的一次 saveMapping 覆盖**；要热切换就得走命令面。
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.4：写句柄被别人占着时，借那个活 agent
+
+现象：`/session <完整 id>` 能进到切换逻辑了，但被宿主挡回来：
+`session "onebot-private-2321697993-mvnsn94o" is already owned by an active write handle`。
+顾羽说「我之前就可以 web 和 qq 同时用一个会话」——他是对的。
+
+查证（读 app.asar 里的 session 管理器）：一个 Session 同时只能有一个写句柄，
+`agents.resume()` 撞上就抛 `SessionAlreadyOwnedError`。宿主自己的 ACP/Web 层对这个错误
+的处理是：`ctx.agents.get(sessionId)` 取那个**已经活着的 agent** 复用。也就是说
+「Web 和 QQ 同一个会话」的真实机制是——**谁建立的会话谁持写句柄，另一侧接同一个
+live agent**，不是两个句柄。
+
+改动（`src/registry.ts`）：
+- `resumeChat` 里把 `agents.resume(...)` 换成 `this.resumeOrAdopt(sessionId, agentOptions, setup)`。
+- 新方法 `resumeOrAdopt`：正常 resume；若抛 `SessionAlreadyOwnedError`，取
+  `this.deps.agents.get(makeSessionId(sessionId))`，拿到就返回一个**借来的** handle
+  `{ agent: live, dispose: async () => {} }`，并记一条 info「adopted live agent」。
+  拿不到（会话其实没活着）就把原错误抛回去，走原有的 retire 回退。
+- 借来的 handle 的 dispose 是 no-op：那个 agent 的生命周期属于持有写句柄的一方，
+  插件不能在换会话 / 关 chat 时把它销毁。
+
+验证：`tsc` 干净；`tests/registry.spec.ts` 新增用例「borrows the live agent when another
+owner already holds the write handle」（resume 抛该错误、get 返回活 agent，断言 get 被调用
+且日志有 adopted）；`registry.spec.ts` + `session-switch.spec.ts` 36 个用例全绿。
+
+教训：会话归属是「写句柄唯一、读者可多」；要做双端同时用，只能让 QQ 侧接别人的 live
+agent，不能另开一个写句柄。

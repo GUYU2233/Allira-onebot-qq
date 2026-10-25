@@ -413,6 +413,73 @@ describe('ChatRegistry', () => {
     await bridge.stop()
   })
 
+  it('borrows the live agent when another owner already holds the write handle', async () => {
+    const ctx = new Context()
+    const mediaDir = mkdtempSync(join(tmpdir(), 'onebot-test-'))
+    await mkdir(mediaDir, { recursive: true })
+    await writeFile(join(mediaDir, 'chat-sessions.json'), JSON.stringify({ 'private:10001': 'onebot-private-10001' }), 'utf8')
+    const logLines: string[] = []
+    const liveAgent = {
+      id: 'onebot-private-10001',
+      session: { id: 'onebot-private-10001', header: { cwd: mediaDir } },
+      whenIdle: async () => undefined,
+    }
+    const owned = new Error('session "onebot-private-10001" is already owned by an active write handle')
+    owned.name = 'SessionAlreadyOwnedError'
+    const agents = {
+      create: vi.fn(),
+      resume: vi.fn(async () => { throw owned }),
+      get: vi.fn(() => liveAgent),
+    }
+    const agentPresets = {
+      defaultId: 'router-flash',
+      resolve: vi.fn(async (id?: string) => ({ id: id ?? 'router-flash' })),
+      mount: vi.fn(async (_agentCtx: unknown, id?: string) => ({ id: id ?? 'router-flash' })),
+    }
+    const sessionPersistence = {
+      open: vi.fn(async () => ({
+        header: { agentPreset: 'router-flash' },
+        read: vi.fn(async () => ({ eventState: 'detached' as const, events: [] })),
+        close: vi.fn(async () => undefined),
+      })),
+    }
+    const bridge = new ChatBridge({
+      ctx,
+      connection: new OneBotConnection({
+        mode: 'reverse', host: '127.0.0.1', port: 0, url: 'ws://127.0.0.1:3001', accessToken: 'test-token', callTimeoutMs: 3_000,
+      }),
+      media: new MediaStore(join(mediaDir, 'media'), 6),
+      transcriber: new Transcriber({ enabled: false, engine: 'auto', command: '', args: [], model: 'small', timeoutMs: 10_000 }),
+      agents: agents as never,
+      sessions: { flush: vi.fn(async () => undefined) } as never,
+      agentPresets: agentPresets as never,
+      sessionPersistence: sessionPersistence as never,
+      workspaceRegistry: undefined as never,
+      defaultModel: undefined,
+      config: {
+        botQQ: '10002', ignoreSelf: false, requireMention: true,
+        interimMessages: true, sendErrorNotice: true, restrictedMemberPrefix: false,
+        sensitivePatterns: [], mediaDir, maxImageBytes: 8 * 1024 * 1024,
+        maxVoiceBytes: 15 * 1024 * 1024, maxFileBytes: 20 * 1024 * 1024,
+        textImageThreshold: 0, cardFooter: 'dsh', fontFiles: [], fontFamilies: [],
+        agentPreset: 'standard', workspacePath: mediaDir,
+      },
+      policy: {
+        dmPolicy: 'open', groupPolicy: 'open', allowFrom: [], groupAllowFrom: [],
+        adminUsers: ['10001'], allowAllUsers: false, requireMention: true,
+      },
+      log: (level, message) => { logLines.push(level + ': ' + message) },
+    })
+    await registryOf({ bridge }).loadMapping()
+    // 写句柄在别的入口（Web）手里 → 不能 resume，改为共用那个活着的 agent。
+    expect(agents.resume).toHaveBeenCalled()
+    expect(agents.get).toHaveBeenCalledWith('onebot-private-10001')
+    expect(logLines.some(line => line.includes('adopted live agent'))).toBe(true)
+    // 借来的 agent 不能在 chat 销毁时被顺手 dispose 掉（生命周期归持有句柄那方）。
+    await bridge.stop()
+    expect(liveAgent.whenIdle).toBeDefined()
+  })
+
   it('resolveRecordedPreset: newest logged selection wins, else the creation header', () => {
     const events = [
       { type: 'user/message', data: { content: [] } },
