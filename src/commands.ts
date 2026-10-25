@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url'
 import type { OneBotConnection } from './connection.js'
 import type { MediaRef } from './cq.js'
 import { RESTRICTED_PREFIX, type ChatId, type UserRole, wrapUserMessage } from './chat.js'
-import type { PendingSelection, SessionSwitchOutcome, SwitchableSession } from './registry.js'
+import type { PendingSelection, SessionSwitchOptions, SessionSwitchOutcome, SwitchableSession } from './registry.js'
 import { fileToBase64 } from './media.js'
 import type { AgentDefaultModelLike, AgentPresetsLike, BridgeConfig, BridgeDeps, LlmCatalogPort, SessionPersistenceLike, SessionPreviewEvent, SessionReadHandleLike, WorkspaceRegistryLike } from './bridge.js'
 import { describeError } from './errors.js'
@@ -84,7 +84,7 @@ export interface CommandContext {
   /** /session: this chat's switchable retired sessions (newest first). */
   switchableSessions(chatId: ChatId): SwitchableSession[]
   /** /session <序号>: switch the chat back to a listed session. */
-  switchSession(chatId: ChatId, targetSessionId: string): Promise<SessionSwitchOutcome>
+  switchSession(chatId: ChatId, targetSessionId: string, options?: SessionSwitchOptions): Promise<SessionSwitchOutcome>
   /** /session list previews: the persistence port each retired session's
    * first user input is cold-read through (read handle + small event prefix).
    * Absent = preview-less items. */
@@ -1030,7 +1030,20 @@ async function handleSessionCommand(ctx: CommandContext, chatId: ChatId, arg: st
   const picked = await resolveNumericSelection(ctx, chatId, 'session', arg, '/session')
   if (picked === null) return
   if (picked === undefined) {
-    await ctx.sendToChat(chatId, '用法：/session 查看可切回会话；/session <序号> 切回。')
+    // 管理员逃生门：/session <完整 session id> 直接接管一个不在本 chat
+    // 可切回列表里的会话（例如由 Web 端创建的会话）。序号路径仍需列表校验。
+    const explicit = arg.trim()
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{5,}$/.test(explicit)) {
+      await ctx.sendToChat(chatId, '用法：/session 查看可切回会话；/session <序号> 切回；/session <完整 session id> 强制接管。')
+      return
+    }
+    const forced = await ctx.switchSession(chatId, explicit, { allowUnlisted: true })
+    if (forced.ok) {
+      await ctx.sendToChat(chatId, `✅ 已接管会话：${forced.sessionId}
+下一条消息起就在这个会话的上下文里。`)
+      return
+    }
+    await ctx.sendToChat(chatId, '❌ 接管失败：' + forced.message)
     return
   }
   const outcome = await ctx.switchSession(chatId, picked.payload)

@@ -755,7 +755,7 @@ export class ChatBridge {
       setPendingSelection: (chatId, value) => { bridge.registry.getSettings(chatId).pendingSelection = value },
       // /session: the per-chat switchable history and the switch itself.
       switchableSessions: chatId => bridge.registry.switchableSessions(chatId),
-      switchSession: (chatId, targetSessionId) => bridge.registry.switchSession(chatId, targetSessionId),
+      switchSession: (chatId, targetSessionId, options) => bridge.registry.switchSession(chatId, targetSessionId, options),
       // /session list previews: cold-read each retired session's first user
       // input through the persistence port (read handle, small prefix).
       sessionPersistence: bridge.deps.sessionPersistence,

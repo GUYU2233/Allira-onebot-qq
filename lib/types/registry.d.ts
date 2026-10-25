@@ -34,6 +34,12 @@ export type SessionSwitchOutcome = {
     reason: 'busy' | 'not-switchable' | 'broken' | 'resume-failed';
     message: string;
 };
+/** `allowUnlisted` 是 /session <完整 id> 的管理员逃生门：跳过「必须在本 chat
+ * 的可切回列表里」这条校验，用于接管由别的入口（Web / 其它 chat）建立的会话。
+ * 其余校验（broken / busy / resume 失败回退）照旧。 */
+export interface SessionSwitchOptions {
+    allowUnlisted?: boolean;
+}
 /** R2: one pending serial-number selection snapshot — the numbered list a
  * bare /workspace|/model|/preset|/session rendered, kept per chat so a
  * following `/cmd <序号>` picks an entry without re-listing. `payload` stores the exact
@@ -305,7 +311,7 @@ export declare class ChatRegistry {
      * hard-retired, dropped from the list, and the chat falls back to a fresh
      * session on its next message — it never gets stuck.
      */
-    switchSession(chatId: ChatId, targetSessionId: string): Promise<SessionSwitchOutcome>;
+    switchSession(chatId: ChatId, targetSessionId: string, options?: SessionSwitchOptions): Promise<SessionSwitchOutcome>;
     /** T3-R1 (review closure): carry the chat's persisted settings across a
      * reset or a collision heal — snapshot them into evictedChats under the
      * (about-to-be-retired) session id, so the trailing saveMapping keeps the

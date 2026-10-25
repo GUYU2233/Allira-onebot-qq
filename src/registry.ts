@@ -48,6 +48,11 @@ export type SessionSwitchOutcome =
   | { ok: true; sessionId: string }
   | { ok: false; reason: 'busy' | 'not-switchable' | 'broken' | 'resume-failed'; message: string }
 
+/** `allowUnlisted` 是 /session <完整 id> 的管理员逃生门：跳过「必须在本 chat
+ * 的可切回列表里」这条校验，用于接管由别的入口（Web / 其它 chat）建立的会话。
+ * 其余校验（broken / busy / resume 失败回退）照旧。 */
+export interface SessionSwitchOptions { allowUnlisted?: boolean }
+
 /** R2: one pending serial-number selection snapshot — the numbered list a
  * bare /workspace|/model|/preset|/session rendered, kept per chat so a
  * following `/cmd <序号>` picks an entry without re-listing. `payload` stores the exact
@@ -863,9 +868,16 @@ export class ChatRegistry {
    * hard-retired, dropped from the list, and the chat falls back to a fresh
    * session on its next message — it never gets stuck.
    */
-  async switchSession(chatId: ChatId, targetSessionId: string): Promise<SessionSwitchOutcome> {
+  async switchSession(
+    chatId: ChatId,
+    targetSessionId: string,
+    options?: SessionSwitchOptions,
+  ): Promise<SessionSwitchOutcome> {
     const target = targetSessionId.trim()
-    if (!(this.switchableByChat.get(chatId) ?? []).some(entry => entry.id === target)) {
+    if (
+      options?.allowUnlisted !== true
+      && !(this.switchableByChat.get(chatId) ?? []).some(entry => entry.id === target)
+    ) {
       this.deps.log('warn', 'session switch rejected for ' + chatId + ': ' + target + ' is not in the chat switchable list')
       return { ok: false, reason: 'not-switchable', message: '目标会话不在该 chat 的可切回列表中' }
     }

@@ -11,7 +11,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session';
 import type { OneBotConnection } from './connection.js';
 import type { MediaRef } from './cq.js';
 import { type ChatId, type UserRole } from './chat.js';
-import type { PendingSelection, SessionSwitchOutcome, SwitchableSession } from './registry.js';
+import type { PendingSelection, SessionSwitchOptions, SessionSwitchOutcome, SwitchableSession } from './registry.js';
 import type { AgentDefaultModelLike, AgentPresetsLike, BridgeConfig, BridgeDeps, LlmCatalogPort, SessionPersistenceLike, SessionPreviewEvent, WorkspaceRegistryLike } from './bridge.js';
 import type { TraceStage } from './trace.js';
 /** Narrow view of a live chat the command handlers may read or mutate —
@@ -76,7 +76,7 @@ export interface CommandContext {
     /** /session: this chat's switchable retired sessions (newest first). */
     switchableSessions(chatId: ChatId): SwitchableSession[];
     /** /session <序号>: switch the chat back to a listed session. */
-    switchSession(chatId: ChatId, targetSessionId: string): Promise<SessionSwitchOutcome>;
+    switchSession(chatId: ChatId, targetSessionId: string, options?: SessionSwitchOptions): Promise<SessionSwitchOutcome>;
     /** /session list previews: the persistence port each retired session's
      * first user input is cold-read through (read handle + small event prefix).
      * Absent = preview-less items. */

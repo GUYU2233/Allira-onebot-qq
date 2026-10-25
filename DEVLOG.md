@@ -886,3 +886,26 @@ docker restart 会丢登录态（需重新扫码/QCE 登录）
 - **改动③（包名）**：`dsh-onebot-qq` → `Allira-onebot-qq`。cordis loader entry id（`dsh-onebot`）**不动**——profile patch 的 config 覆盖行按它寻址。同步：package.json（name/repository/homepage/bugs）、cordis.patch.yml 两条 `name`、`lib/client.js` 的 ModuleLoader `id` / `PLUGIN_ID` / `plugins.bundle.config` slot key（宿主按**包名**下发 client entry 且校验 bundle 注册 id，见 0.4.6 事故条目）、dsh.plugin.json 版本、tests/client-settings.spec.ts 五处。**注意：npm 新包名不允许大写**，此名只用于 link/私仓，不可 `npm publish`。
 - **验证**：`tsc -p tsconfig.json` exit 0；全量 vitest 40 文件 591 用例 → 25 failed / 557 passed / 9 skipped。25 条失败全部是**本机测试环境**既存问题（非本次改动）：t2i 卡片需 CJK 字体（bridge/interim/media-guard 组的卡片断言）、Windows TEMP 8.3 短名 `ADMINI~1` vs `Administrator`（commands/tools-gate）、并行负载下的 WS 时序 flake（inject，隔离单跑 11/11 绿）。`tests/qqsplit.spec.ts` 24/24、`tests/companion.spec.ts` + 设置两件 129/129 全绿。
 - **工具面副产物**：本仓 `.git` 曾损坏（缺 HEAD/index/config），已按 `refs/heads/main` 重建并 `git reset --mixed` 复原 index；`node_modules` 曾误删，按 pnpm 12.14.0 重装（`pnpm-lock.yaml` 的 autoInstallPeers 差异属重装噪声，已回滚不入库）。
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.3：/session <完整 id> 管理员逃生门
+
+背景：QQ 私聊绑的会话是 `mvo1t1o0`，而顾羽在 Web 里看的是 `mvnsn94o`。想切过去，
+但 `/session` 只认「本 chat 的可切回列表 + 数字序号」，`mvnsn94o` 不在列表里（它还在
+`retired-sessions.json` 里被标成退休），两条校验全堵。直接改状态文件也不行：旧插件
+进程 shutdown 时用内存状态 `saveMapping` 把 `chat-sessions.json` 又写回去了。
+
+改动：
+- `src/registry.ts`：新增 `export interface SessionSwitchOptions { allowUnlisted?: boolean }`；
+  `switchSession(chatId, targetSessionId, options?)` 的列表校验改为
+  `options?.allowUnlisted !== true && !列表命中` 才拒绝（broken / busy / resume 失败回退照旧）。
+- `src/commands.ts`：`handleSessionCommand` 里，非数字参数且形如完整 session id
+  （`/^[A-Za-z0-9][A-Za-z0-9._:-]{5,}$/`）时走 `{ allowUnlisted: true }` 直切，回
+  「✅ 已接管会话：<id>」；纯序号路径不变。用法文案补一句「/session <完整 session id> 强制接管」。
+- `src/bridge.ts`：把 options 透传给 registry。
+
+验证：`tsc` 干净；`tests/session-switch.spec.ts` 全绿（1000+ 断言里的切换契约未变），
+`tests/commands.spec.ts` 剩 3 个失败 —— 与改动前完全相同的 Windows 8.3 短名 / 工作区
+快照环境问题，非本次引入。
+
+教训：**改 `~/.dsh/media/onebot/*.json` 这类插件自有状态文件，必须在插件不运行时改，
+否则会被 shutdown 时的一次 saveMapping 覆盖**；要热切换就得走命令面。
