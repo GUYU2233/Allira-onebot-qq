@@ -21,7 +21,9 @@ import type { BridgeDeps, WorkspaceRegistryLike } from './bridge.js'
 import type { AccessPolicyConfig } from './chat.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 // R1 部署加固：peer 依赖解析失败/关键模块缺失时必须显眼报错并 fail-loud，
 // 不能静默不挂载。静态 import 会在本模块任何代码运行之前就以晦涩的
@@ -575,6 +577,23 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
   companionDiag(`apply: companionQq(config)=${String(config.companionQq)} workspace=${String(config.workspacePath)}`)
+
+  // dsh-meme 那条「迟到 QQ 通道」补丁躺在它的 node_modules 里，升级即丢。
+  // 每次启动同步跑一次守护脚本：已是最新就几十毫秒返回；缺失就重打——
+  // 但重打只对**下一次**启动生效（本次的模块早就 import 过了），所以结果
+  // 必须落进诊断日志，别让人以为这次就修好了。
+  try {
+    const guardScript = fileURLToPath(new URL('../scripts/ensure-dsh-meme-qq.mjs', import.meta.url))
+    if (existsSync(guardScript)) {
+      const guard = spawnSync(process.execPath, [guardScript], { encoding: 'utf8', timeout: 20_000 })
+      const output = `${String(guard.stdout ?? '').trim()} ${String(guard.stderr ?? '').trim()}`.trim()
+      companionDiag(`dsh-meme 补丁守护: ${output || `exit=${String(guard.status)}`}`)
+    } else {
+      companionDiag(`dsh-meme 补丁守护: 脚本不在 ${guardScript}`)
+    }
+  } catch (error) {
+    companionDiag(`dsh-meme 补丁守护异常: ${String(error)}`)
+  }
 
   if (config.companionQq) {
     const companionQq = createCompanionQq({

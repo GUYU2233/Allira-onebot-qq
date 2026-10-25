@@ -937,3 +937,9 @@ owner already holds the write handle」（resume 抛该错误、get 返回活 ag
 
 教训：会话归属是「写句柄唯一、读者可多」；要做双端同时用，只能让 QQ 侧接别人的 live
 agent，不能另开一个写句柄。
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.6：dsh-meme 补丁守护脚本
+- 背景：`send_meme` 要能在 companionQq 迟到时切到 QQ 通道，唯一的路径是给 dsh-meme 打「先 dispose 再重注册」的补丁；那个补丁躺在 `node_modules/dsh-meme` 里，dsh-meme 一升级就被覆盖，表情包会悄悄退回 Web 模式。
+- 做法：`scripts/ensure-dsh-meme-qq.mjs` —— 幂等、锚点校验、换行风格保留、先备份 `.bak-<版本>`，锚点对不上就报错退出绝不写坏文件；本插件 apply 时 `spawnSync` 跑一次，结果写进 `日志/companion-qq.log`。
+- 验证：拿上游 0.1.60 的原始文件（`.bak-before-late-qq`）在临时目录跑一遍，产出的 index.js / memes.js 与线上已打补丁的文件逐字节一致（忽略换行风格），二次运行正确跳过。
+- 注意：补丁是**下次启动**生效——重打发生在本次启动的 apply 里，那时 dsh-meme 的模块已经 import 过了。
