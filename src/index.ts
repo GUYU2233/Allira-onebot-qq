@@ -21,6 +21,7 @@ import type { BridgeDeps, WorkspaceRegistryLike } from './bridge.js'
 import type { AccessPolicyConfig } from './chat.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { appendFileSync, mkdirSync } from 'node:fs'
 
 // R1 部署加固：peer 依赖解析失败/关键模块缺失时必须显眼报错并 fail-loud，
 // 不能静默不挂载。静态 import 会在本模块任何代码运行之前就以晦涩的
@@ -561,6 +562,20 @@ export function apply(ctx: Context, config: Config): void {
   // 原先由独立插件 dsh-companion-onebot 自己再开一条 WS 顶上——同一个 NapCat、
   // 同一批聊天，却绕过了主动写闸、审计和工作区 trace。搬进来之后必须停用那个
   // 独立插件：两个同名 provide 会撞（cordis 会报重复 provide）。
+  // 阿莉拉二开（T-A2 诊断）：宿主没有主日志文件，插件 log() 只进控制台，
+  // 排查「companionQq 到底挂没挂上」只能自己落盘一行。写到工作区的日志目录。
+  const companionDiag = (message: string): void => {
+    try {
+      const dir = join(config.workspacePath ?? homedir(), '日志')
+      mkdirSync(dir, { recursive: true })
+      appendFileSync(join(dir, 'companion-qq.log'), `${new Date().toISOString()} ${message}
+`)
+    } catch {
+      // 诊断落盘失败不许影响主流程
+    }
+  }
+  companionDiag(`apply: companionQq(config)=${String(config.companionQq)} workspace=${String(config.workspacePath)}`)
+
   if (config.companionQq) {
     const companionQq = createCompanionQq({
       connected: () => connection.connected,
@@ -583,11 +598,34 @@ export function apply(ctx: Context, config: Config): void {
     })
     ctx.effect(() => {
       const dispose = ctx.provide('companionQq', companionQq)
+      let visible: unknown
+      try {
+        visible = (ctx as unknown as { get?: (name: string) => unknown }).get?.('companionQq')
+      } catch (error) {
+        visible = `get() 抛了：${String(error)}`
+      }
+      companionDiag(`provide companionQq: 命中=${String(visible === companionQq)}`)
       // dsh-meme 先 ctx.get('companionQq')，拿不到就挂着等这个事件补注册；
       // 所以必须先 provide 再广播。
       ctx.emit('companionQq/available')
+      companionDiag('emit companionQq/available (t=0)')
+      // 自愈：dsh-meme 的 apply 可能晚于本插件（bundle 顺序 / inject 延迟），那时
+      // 它拿不到服务就退化成 Web 模式（send_meme 没有 action/path 参数）。补广播
+      // 几次，dsh-meme 收到事件后会 dispose 旧工具、按 QQ 通道重注册。
+      const timers = [1_500, 4_000, 10_000].map(delay => setTimeout(() => {
+        try {
+          ctx.emit('companionQq/available')
+          companionDiag(`emit companionQq/available (t=${delay}ms)`)
+        } catch (error) {
+          companionDiag(`emit t=${delay}ms 失败：${String(error)}`)
+        }
+      }, delay))
       log('info', 'companionQq 已挂载：send_meme 走本插件的 QQ 连接（记得停用 dsh-companion-onebot）')
-      return dispose
+      return () => {
+        for (const timer of timers) clearTimeout(timer)
+        dispose()
+        companionDiag('dispose companionQq')
+      }
     }, 'dsh-onebot.companionQq')
   }
 
