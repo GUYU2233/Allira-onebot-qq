@@ -1,9 +1,3 @@
-/**
- * OneBot 11 message parsing: CQ-code unescaping, segment-array → text/media
- * extraction, mention detection, and face-id → emoji mapping. Ported from the
- * Hermes onebot_utils.py (CQ parsing half). Pure functions, no I/O.
- * @module dsh-onebot/cq
- */
 /** One OneBot 11 message segment. */
 export interface OneBotSegment {
     type: string;
@@ -39,8 +33,8 @@ export interface ParsedMessage {
  * @returns unescaped value.
  */
 export declare function cqUnescape(value: string): string;
-/** Map a QQ face id to an emoji, with a fallback for unknown ids. */
-export declare function faceToEmoji(id: string): string;
+/** 一个 face 段的展示文本（NapCat 的 raw.faceText 优先）。 */
+export declare function faceToEmoji(id: string, rawText?: string): string;
 /**
  * Detect whether the message mentions the bot. Prefers the segment array;
  * falls back to CQ-string scanning. @-detection stays fail-closed: with an

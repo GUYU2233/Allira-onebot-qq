@@ -11,6 +11,7 @@
  * pipeline-order overrides keep working unchanged.
  * @module dsh-onebot/inbound
  */
+import { faceToText } from './face-names.js'
 import { writeFile } from 'node:fs/promises'
 
 import type { OneBotEvent } from './connection.js'
@@ -679,7 +680,10 @@ function nodeContentText(content: unknown, ownerName: string, media: MediaRef[],
       .map(seg => {
         const s = seg as { type?: string; data?: Record<string, unknown> }
         if (s?.type === 'text') return String(s.data?.text ?? '')
-        if (s?.type === 'face') return '😀'
+        if (s?.type === 'face') {
+          const raw = s.data?.raw as { faceText?: unknown } | undefined
+          return faceToText(String(s.data?.id ?? ''), typeof raw?.faceText === 'string' ? raw.faceText : undefined)
+        }
         if (s?.type === 'image') {
           media.push({
             kind: 'image',

@@ -24,10 +24,19 @@ describe('parseMessage', () => {
     expect(parsed.media[0].kind).toBe('image')
   })
 
+  it('renders a face segment with the faceText NapCat attached', () => {
+    const parsed = parseMessage(
+      [{ type: 'face', data: { id: '319', raw: { faceText: '/比心' } } } as never],
+      '',
+      '',
+    )
+    expect(parsed.text).toBe('[QQ表情:比心]')
+  })
+
   it('falls back to CQ string parsing', () => {
     const parsed = parseMessage(undefined, 'hi [CQ:face,id=0] [CQ:image,url=https://x/y.png]')
     expect(parsed.text).toContain('hi')
-    expect(parsed.text).toContain('😀')
+    expect(parsed.text).toContain('[QQ表情:惊讶]')
     expect(parsed.media).toHaveLength(1)
   })
 
@@ -100,8 +109,17 @@ describe('detectMention', () => {
 })
 
 describe('faceToEmoji', () => {
-  it('maps known and unknown ids', () => {
-    expect(faceToEmoji('0')).toBe('😀')
-    expect(faceToEmoji('999999')).toBe('😀')
+  it('maps known ids to their QQ name', () => {
+    expect(faceToEmoji('0')).toBe('[QQ表情:惊讶]')
+    expect(faceToEmoji('319')).toBe('[QQ表情:比心]')
+  })
+  it('prefers the faceText NapCat ships with the segment', () => {
+    expect(faceToEmoji('319', '/比心')).toBe('[QQ表情:比心]')
+    expect(faceToEmoji('999999', '/新表情')).toBe('[QQ表情:新表情]')
+  })
+  it('degrades on unknown ids and non-numeric (emoji) ids', () => {
+    expect(faceToEmoji('999999')).toBe('[QQ表情:未知999999]')
+    expect(faceToEmoji('')).toBe('[QQ表情]')
+    expect(faceToEmoji('😊')).toBe('😊')
   })
 })

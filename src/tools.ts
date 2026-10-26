@@ -47,6 +47,41 @@ function sendOutput() {
   }
 }
 
+/** One row of qq_group_history output. */
+interface GroupHistoryRow {
+  message_id: string | null
+  time: string | null
+  user_id: string | null
+  nickname: string
+  text: string
+}
+
+/** Truncate one history line so a 50-message pull cannot flood the context. */
+const HISTORY_LINE_MAX = 300
+
+/**
+ * Render group history as readable lines. Returning only a count hid every
+ * message from the model, which made the tool useless for its stated purpose
+ * (summarising group context). Time is rendered in the host's local zone so
+ * the model sees the same clock as the rest of its context.
+ * @param value - the tool's raw return value (rows from get_group_msg_history).
+ * @returns one human-readable block, one line per message.
+ */
+export function renderGroupHistory(value: unknown): string {
+  const list = Array.isArray(value) ? value as GroupHistoryRow[] : []
+  if (list.length === 0) return '（没有拉到历史消息）'
+  const lines = list.map(row => {
+    const at = row.time !== null && row.time !== '' && Number.isFinite(Number(row.time))
+      ? new Date(Number(row.time) * 1000).toLocaleString('zh-CN', { hour12: false })
+      : '?'
+    let text = row.text.replace(/\s+/g, ' ').trim()
+    if (text === '') text = '（无文字）'
+    else if (text.length > HISTORY_LINE_MAX) text = text.slice(0, HISTORY_LINE_MAX) + '…'
+    return '[' + at + '] ' + row.nickname + '(' + (row.user_id ?? '?') + '): ' + text
+  })
+  return list.length + ' 条历史消息（旧→新）：\n' + lines.join('\n')
+}
+
 /** Resolve the target chat for a tool call. */
 function resolveChat(bridge: ChatBridge, exec: ToolRunContext, chatIdArg: unknown): string {
   if (typeof chatIdArg === 'string' && chatIdArg !== '') return chatIdArg
@@ -292,10 +327,7 @@ export function registerTools(
         type: 'array',
         items: { type: 'object', additionalProperties: true },
       },
-      render: (_args: unknown, value: unknown) => {
-        const list = Array.isArray(value) ? value : []
-        return [{ type: 'text', text: list.length + ' 条历史消息' }]
-      },
+      render: (_args: unknown, value: unknown) => [{ type: 'text', text: renderGroupHistory(value) }],
     },
     isConcurrencySafe: () => true,
     execute: async (args, exec) => {

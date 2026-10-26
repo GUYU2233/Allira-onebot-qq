@@ -185,7 +185,7 @@ describe('inbound pipeline', () => {
     expect(text).toMatch(/\[图片:\S+\.(png|jpg|jpeg|gif|webp)\]/)
     // Nested node text is not swallowed as '[非文本]'.
     expect(text).toContain('小刚: 嵌套内容')
-    expect(text).toContain('小红: 😀')
+    expect(text).toContain('小红: [QQ表情:撇嘴]')
     expect(text).not.toContain('[非文本]')
     h.client.close()
     await h.bridge.stop()

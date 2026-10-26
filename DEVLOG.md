@@ -973,3 +973,49 @@ agent，不能另开一个写句柄。
 - 缓冲期只加 debug 日志，不动 trace 契约。
 
 **验证**：`tsc` exit 0；`vitest run tests/group-quiet.spec.ts tests/settings-remote.spec.ts tests/client-settings.spec.ts tests/qqsplit.spec.ts tests/companion.spec.ts` → 5 files / 138 tests 全绿。全量套件 24 个失败均为既有环境问题（t2i 缺 CJK 字体、Windows 8.3 短路径）。
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.8：QQ 表情不再被猜成别的 emoji
+
+**动机**：顾羽在 QQ 里发「比心」，我这边读成了 🦌，还回了一句「怎么啦」。他说「我想知道为什么我在qq里发的emoji到你那里就变了」。
+
+**根因**：`src/cq.ts` 里有一张手写的 `FACE_EMOJI`（id → emoji），跟 QQ 真实编号对不上。例：319 实际是 `/比心`，表里写成 🦌；0 实际是 `/惊讶`，表里写成 😀；1 是 `/撇嘴` 写成 😁。整张表 295 条里 203 条有对照名，对得上的只是少数。NapCat 其实**在 face 段里直接给了名字**（`data.raw.faceText`，形如 `/比心`），我们完全没用。
+
+**实现**：
+- 新增 `src/face-names.ts`：`FACE_NAMES`（329 条 id → 中文名）+ `faceToText(id, rawText?)`。优先用 `rawText`（NapCat 附带的 `raw.faceText`），没有才查表；未知 id → `[QQ表情:未知<id>]`，非数字 id（emoji 型 face）原样返回，空 id → `[QQ表情]`。
+- 新增 `scripts/gen-face-names.mjs`：从 NapCatQQ 的 `packages/napcat-core/external/face_config.json` 重新生成 `FACE_NAMES`（换 QQ 版本后重跑）。产物幂等，脚本跑两遍结果一致。
+- `src/cq.ts`：删掉手写 emoji 表，`faceToEmoji(id, rawText?)` 转调 `faceToText`；face 段解析处带上 `seg.data.raw.faceText`。
+- `src/inbound.ts`：合并转发里的 face 段同样走 `faceToText`（原来固定返回 😀）。
+- `src/prompt.ts`：平台说明加一条——QQ 系统表情会写成 `[QQ表情:名字]`，按字面理解。
+- 测试：`tests/cq.spec.ts` 的 `faceToEmoji` 用例重写（已知 id / rawText 优先 / 未知 id / 非数字 id），新增 face 段解析用例；`tests/inbound.spec.ts` 的转发 face 断言改为 `[QQ表情:撇嘴]`。
+
+**验证**：`tsc -p tsconfig.json` exit 0；`vitest run tests/cq.spec.ts tests/inbound.spec.ts` 48 用例全绿；全量 24 个失败与本次无关（t2i 缺 CJK 字体、Windows 8.3 短路径，均为既有环境问题）。
+
+**教训**：协议字段里已经有权威答案（NapCat 的 `raw.faceText`）时，别自己维护一张会过期的映射表；就算要表，也得有生成脚本和来源说明。
+
+## 2026-10-26 阿莉拉二开 0.9.7-allira.9：qq_group_history 把消息还给模型
+
+**动机**：我在群里「看不见上下文」。翻群会话日志（`~/.dsh/sessions/--E-ALLIRA--/onebot-group-364674965/session.v4.jsonl.zstd`）时发现：10-25 09:19 到 10-26 09:32 之间，群里真实入站消息 24 条，但我的上下文里几乎什么都没留下——好几句我甚至读到了别人的 @ 数字却不知道那是谁。根因不在提示词，在工具。
+
+**根因**：`src/tools.ts` 里 `qq_group_history` 的 `output.render` 是
+
+```ts
+render: (_args, value) => {
+  const list = Array.isArray(value) ? value : []
+  return [{ type: 'text', text: list.length + ' 条历史消息' }]
+}
+```
+
+拉到的每一条消息都被丢掉，模型只看到「20 条历史消息」这句。工具描述写着「供总结群内上下文、查看用户之前的发言」，实际做不到——**这是工具坏了，不是模型不会用**。
+
+**实现**：
+- 新增导出函数 `renderGroupHistory(value: unknown): string`（`src/tools.ts`）：空数组/null/undefined → 「（没有拉到历史消息）」；否则首行 `N 条历史消息（旧→新）：`，其后每条一行 `[本地时间] 昵称(QQ): 正文`。
+- 单条正文压成一行（`\s+` → 空格）、上限 `HISTORY_LINE_MAX = 300` 字符，超出加省略号——50 条拉满也不会撑爆上下文。
+- 无文字条目（纯图片/表情）显示「（无文字）」，不留空行。
+- `time` 缺失或非法时显示 `?` 不抛错。
+- `render` 改为直接返回 `renderGroupHistory(value)` 的结果。
+
+**测试**：新增 `tests/group-history.spec.ts`，7 例（空态 / 每条都在输出里 / 条数开头且旧→新 / 过长截断 / 无文字占位 / 换行压平 / time 非法不崩）。
+
+**验证**：`tsc -p tsconfig.json` exit 0；`vitest run tests/group-history.spec.ts` 7/7 全绿。全量套件 **24 个失败**，与本次改动无关：`git stash` 掉本次三个文件后跑基线，失败集合是「现在 24 个」的**严格超集**（差的 7 个正是本文件新增的用例在基线里找不到导出），即 `only in now: []`。失败原因仍是既有环境问题（t2i 缺 CJK 字体、Windows 8.3 短路径 `ADMINI~1`）。
+
+**教训**：工具的 `render` 是模型和真实返回值之间唯一的一道门——写它的时候要假设「返回值里的每一个字模型都拿不到，除非我把它写进 render」。返回 `length` 这种投影等于把工具变成摆设。
