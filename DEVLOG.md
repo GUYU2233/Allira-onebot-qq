@@ -1042,3 +1042,34 @@ companionDiag(
 **顺带记录一条踩坑**：改完 `cordis.patch.yml` 后我拿 `ps` 看宿主进程启动时间判断「配置有没有生效」——**这个方法不可靠**。宿主对 patch 文件有热重载，改完约 1 秒后 dsh-onebot 就 `dispose` 再 `apply` 了一次（日志里 03:08:44 dispose → 03:08:45 apply），进程启动时间却还是旧的。判据要看诊断日志的 apply 时间戳，不是进程 StartTime。
 
 **验证**：`tsc -p tsconfig.json` exit 0；日志里 03:08:45 那行 `access: dmPolicy=open groupPolicy=open allowAllUsers=true admins=[2321697993] …` 证明 `allowAllUsers: true` 已在宿主内存生效。
+
+## 0.9.7-allira.11 — 执行途中就能给 QQ 发消息（`qq_progress`）
+
+**起因**：顾羽说「给 Allira-onebot-qq 加个功能，让你可以在每次执行途中给我 qq 发消息，而不是只能结束了才能发，这样你可以做一些超长的任务不用担心一直冷落我」。
+
+**为什么以前不行**：一个回合里我确实会在工具调用之间写文本，但那些文本只有两种归宿——攒到回合结束随最终回复发出去，或者走 interim 中间消息（会进「自动撤回」链路，用户看不到留痕）。**执行途中没有任何一条通道能让用户看见东西。**
+
+**实现**（`src/tools.ts`）：新增 `qq_progress` 工具。
+
+```ts
+register(defineTool({
+  name: 'qq_progress',
+  description: '在执行任务的过程中立刻给 QQ 发一条进度消息（不等本轮结束）…',
+  parameters: { text: { type: 'string', required: true }, chat_id: { type: 'string' } },
+  output: { schema: { type: 'json' }, render: … },
+  isConcurrencySafe: () => true,
+  execute: async (args, exec): Promise<JsonValue> => { … },
+}))
+```
+
+三条口径：
+
+1. **走 `bridge.sendToChat`**，和最终回复同一条链——所以 `[[qq]]` 段裁剪、`[表情: …]` 剥壳、敏感词审计、`[[qq_forward]]` 解析、t2i 长文转图全部自动一致，不用另立一套。
+2. **`stripMarkdown` 后再发**（QQ 不渲染 Markdown），剥完为空直接抛错。
+3. **发送失败不抛错**，如实返回 `{ sent: false, reason }`；`render` 把它翻成「未发送：<原因>（继续干活即可，不用重试）」。进度播报是旁路——一次进度没发出去不该把整条长任务打断，但也不能骗模型说「已发送」（那会让它以为用户看到了，傻等回音）。
+
+**提示词**（`src/prompt.ts`）：加一条规则，明确「正文里的中间文本会被自动撤回，`qq_progress` 是唯一执行途中可见的通道」，并叮嘱别用它代替最终答复、也别报完进度又在正文里重复一遍。
+
+**测试**（`tests/progress.spec.ts`，8 例全绿）：真发并回报 message_id / Markdown 剥壳 / 缺 text 由框架拦、空串由工具拦 / 会话解析不出来提示传 chat_id / 显式 chat_id 越过查找 / 被出站层丢掉时如实报告且不抛错 / 断线时也不抛错 / `render` 不把失败说成「已发送」。
+
+**验证**：`tsc -p tsconfig.json` exit 0；`vitest run tests/progress.spec.ts` 8/8。全量套件 24 个失败，`git stash` 出基线对比 `only in now: []`、`only in base: []`——**与本次改动无关**（既有环境问题：t2i 缺 CJK 字体、Windows 8.3 短路径 `ADMINI~1`）。

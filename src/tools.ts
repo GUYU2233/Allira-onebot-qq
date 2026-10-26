@@ -13,6 +13,8 @@ import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import type { ChatBridge } from './bridge.js'
 import type { OneBotConnection } from './connection.js'
 import { fileToBase64, isUrl } from './media.js'
+import { stripMarkdown } from './split.js'
+import { describeError } from './errors.js'
 import { splitChatId } from './chat.js'
 import type { OneBotSegment } from './cq.js'
 import { parseMessage, cqUnescape } from './cq.js'
@@ -139,6 +141,50 @@ export function registerTools(
   const register = (tool: Parameters<typeof ctx.tools.register>[0]): void => {
     disposers.push(ctx.tools.register(tool))
   }
+
+  // 阿莉拉二开（T-A3）：执行途中的进度播报。长任务里模型每步之间本来就有文本，
+  // 但那些文本要等回合结束才随最终回复发出去（或走 interim 中间消息被自动撤回），
+  // 用户在整段执行期间看不到任何东西。这个工具给模型一个「现在就说一句」的出口：
+  // 立即发一条普通文本，不进 interim 的缓冲/撤回链路，回合结束后也不会被撤。
+  register(defineTool({
+    name: 'qq_progress',
+    description: '在执行任务的过程中立刻给 QQ 发一条进度消息（不等本轮结束）。长任务里每完成一步就发一句，让用户知道你在做什么、做到哪了；不要用它发最终答复——最终答复照常直接写在回复里。',
+    parameters: {
+      text: { type: 'string', required: true, description: '要发出去的一两句话（纯文本，别写 Markdown）' },
+      chat_id: { type: 'string', description: '目标会话；省略时默认当前会话' },
+    },
+    output: {
+      schema: { type: 'json' as const },
+      // 进度消息可能没真发出去：出站层判「没什么可发的」会静默丢弃，连接断开
+      // 会失败。两种都别报「已发送」——那会让模型以为用户看到了，白白等回音。
+      render: (_args: unknown, value: unknown) => {
+        const v = value as { sent?: boolean; reason?: string; messageId?: string | null }
+        if (v.sent !== true) return [{ type: 'text' as const, text: '未发送：' + (v.reason ?? '内容为空') + '（继续干活即可，不用重试）' }]
+        return [{ type: 'text' as const, text: v.messageId != null ? '已发送（message_id=' + v.messageId + '）' : '已发送' }]
+      },
+    },
+    isConcurrencySafe: () => true,
+    execute: async (args, exec): Promise<JsonValue> => {
+      const a = args as { text?: unknown; chat_id?: unknown }
+      if (typeof a.text !== 'string' || a.text.trim() === '') throw new Error('qq_progress: text 必填')
+      const chatId = resolveChat(bridge, exec, a.chat_id)
+      // 与最终回复同口径：QQ 不渲染 Markdown，剥壳后再发；剥完为空就没什么可发的。
+      const plain = stripMarkdown(a.text).trim()
+      if (plain === '') throw new Error('qq_progress: text 剥掉 Markdown 后为空')
+      // 进度播报是「有更好、没有也照跑」的旁路：连接断了就如实说没发出去，
+      // 绝不抛错——一次进度发送失败不该把整条长任务打断。
+      let messageId: string | null = null
+      let reason = ''
+      try {
+        const ids = await bridge.sendToChat(chatId, plain)
+        if (ids.length > 0) messageId = ids[0] ?? null
+        else reason = '出站层判定无可发送内容'
+      } catch (error) {
+        reason = describeError(error)
+      }
+      return { sent: messageId !== null, messageId, reason }
+    },
+  }))
 
   register(defineTool({
     name: 'qq_send_image',
