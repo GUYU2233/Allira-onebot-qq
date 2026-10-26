@@ -1019,3 +1019,26 @@ render: (_args, value) => {
 **验证**：`tsc -p tsconfig.json` exit 0；`vitest run tests/group-history.spec.ts` 7/7 全绿。全量套件 **24 个失败**，与本次改动无关：`git stash` 掉本次三个文件后跑基线，失败集合是「现在 24 个」的**严格超集**（差的 7 个正是本文件新增的用例在基线里找不到导出），即 `only in now: []`。失败原因仍是既有环境问题（t2i 缺 CJK 字体、Windows 8.3 短路径 `ADMINI~1`）。
 
 **教训**：工具的 `render` 是模型和真实返回值之间唯一的一道门——写它的时候要假设「返回值里的每一个字模型都拿不到，除非我把它写进 render」。返回 `length` 这种投影等于把工具变成摆设。
+
+## 0.9.7-allira.10 — 准入策略落盘自证
+
+**起因**：顾羽问「现在是不是除了我之外的其他人不能私聊你」。查代码能答（`dmPolicy` 的 `open` 语义是「仅管理员」，靠 `allowAllUsers` 打开同一分支），但**宿主没有主日志**，`~/.dsh/logs/` 下只有 `vision-router/`，插件 `log('info', …)` 根本不落盘。也就是说「谁能跟我说话」这种问题，以前只能靠读 patch 文件 + 手跑一遍判定函数来推断，宿主里到底生效了没有，从外面看不出来。
+
+**实现**（`src/index.ts`）：`companionDiag` 里加一行准入快照，紧跟在 `apply:` 那行之后：
+
+```ts
+companionDiag(
+  `access: dmPolicy=${policy.dmPolicy} groupPolicy=${policy.groupPolicy}`
+  + ` allowAllUsers=${String(policy.allowAllUsers)}`
+  + ` admins=[${policy.adminUsers.join(',')}]`
+  + ` allowFrom=[${policy.allowFrom.join(',')}]`
+  + ` groupAllowFrom=[${policy.groupAllowFrom.join(',')}]`
+  + ` requireMention=${String(policy.requireMention)}`,
+)
+```
+
+落在 `E:\ALLIRA\日志\companion-qq.log`，重启即可自证「宿主内存里到底是谁在放行」。
+
+**顺带记录一条踩坑**：改完 `cordis.patch.yml` 后我拿 `ps` 看宿主进程启动时间判断「配置有没有生效」——**这个方法不可靠**。宿主对 patch 文件有热重载，改完约 1 秒后 dsh-onebot 就 `dispose` 再 `apply` 了一次（日志里 03:08:44 dispose → 03:08:45 apply），进程启动时间却还是旧的。判据要看诊断日志的 apply 时间戳，不是进程 StartTime。
+
+**验证**：`tsc -p tsconfig.json` exit 0；日志里 03:08:45 那行 `access: dmPolicy=open groupPolicy=open allowAllUsers=true admins=[2321697993] …` 证明 `allowAllUsers: true` 已在宿主内存生效。

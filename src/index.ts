@@ -587,6 +587,16 @@ export function apply(ctx: Context, config: Config): void {
     }
   }
   companionDiag(`apply: companionQq(config)=${String(config.companionQq)} workspace=${String(config.workspacePath)}`)
+  // 准入策略也落一行：宿主没有主日志，「谁能跟我说话」这类问题以前只能靠读
+  // patch 文件 + 手跑 dmAllowed 推断，落盘后重启即可自证。
+  companionDiag(
+    `access: dmPolicy=${policy.dmPolicy} groupPolicy=${policy.groupPolicy}`
+    + ` allowAllUsers=${String(policy.allowAllUsers)}`
+    + ` admins=[${policy.adminUsers.join(',')}]`
+    + ` allowFrom=[${policy.allowFrom.join(',')}]`
+    + ` groupAllowFrom=[${policy.groupAllowFrom.join(',')}]`
+    + ` requireMention=${String(policy.requireMention)}`,
+  )
 
   // dsh-meme 那条「迟到 QQ 通道」补丁躺在它的 node_modules 里，升级即丢。
   // 每次启动同步跑一次守护脚本：已是最新就几十毫秒返回；缺失就重打——
