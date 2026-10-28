@@ -169,11 +169,6 @@ export declare function helpText(): string;
  * @returns true when the message was consumed by a command.
  */
 export declare function tryHandleCommand(ctx: CommandContext, chatId: ChatId, text: string, userId: string, nickname?: string): Promise<boolean>;
-/** T2 (P1): the /steer submit notice — one line per accepted instruction.
- * Shared with the bridge's auto-steer path ('steer' policy) so both surfaces
- * word the confirmation identically; exported for the deterministic text
- * wait in tests. */
-export declare const STEER_ACCEPTED_NOTICE = "\u2705 \u5DF2\u4F5C\u4E3A\u8865\u5145\u6307\u4EE4\u63D0\u4EA4\u7ED9\u5F53\u524D\u4EFB\u52A1\uFF0C\u6A21\u578B\u5C06\u5728\u4E0B\u4E00\u6B65\u8BFB\u53D6\u3002";
 /** T2 (P1): the /steer usage hint — replied whenever the command cannot
  * steer (empty argument, no live chat, or no running task). Never crashes,
  * never silently no-ops. */

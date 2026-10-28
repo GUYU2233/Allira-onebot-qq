@@ -311,12 +311,6 @@ async function handleStopCommand(ctx: CommandContext, chatId: ChatId): Promise<v
   ctx.stopDeferredTracking(chatId)
 }
 
-/** T2 (P1): the /steer submit notice — one line per accepted instruction.
- * Shared with the bridge's auto-steer path ('steer' policy) so both surfaces
- * word the confirmation identically; exported for the deterministic text
- * wait in tests. */
-export const STEER_ACCEPTED_NOTICE = '✅ 已作为补充指令提交给当前任务，模型将在下一步读取。'
-
 /** T2 (P1): the /steer usage hint — replied whenever the command cannot
  * steer (empty argument, no live chat, or no running task). Never crashes,
  * never silently no-ops. */
@@ -341,7 +335,6 @@ async function handleSteerCommand(ctx: CommandContext, chatId: ChatId, arg: stri
     return
   }
   ctx.log('info', 'slash /steer for ' + chatId)
-  await ctx.sendToChat(chatId, STEER_ACCEPTED_NOTICE)
 }
 
 /** R2: TTL of a pending serial-number selection — judged lazily at the next

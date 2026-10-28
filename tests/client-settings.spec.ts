@@ -198,6 +198,7 @@ describe('T4 客户端 bundle — 四组 30 键（分组/键集/默认值 = T1 �
     expect(enumField('groupPolicy')?.options).toEqual(['open', 'allowlist', 'disabled'])
     expect(enumField('unknownCommand')?.options).toEqual(['intercept', 'passthrough'])
     expect(enumField('newMessagePolicy')?.options).toEqual(['queue', 'steer'])
+    expect(SCHEMA_DEFAULTS.newMessagePolicy).toBe('steer')
     expect(enumField('autoSteerPolicy')?.options).toEqual(['admin', 'all']) // T9：枚举与宿主 ENUM_KEYS 同宽
   })
 

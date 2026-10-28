@@ -487,15 +487,15 @@ describe('onebotSettings remote — W7 listWorkspaces（workspace 注册表只�
 })
 
 describe('onebotSettings remote — P1/T2 newMessagePolicy 白名单扩展（behavior 组 28 键）', () => {
-  it('newMessagePolicy 入快照：默认 \'queue\'、behavior 组尾追加、ALL_KEYS 26→27', () => {
+  it('newMessagePolicy 入快照：默认 \'steer\'、behavior 组尾追加、ALL_KEYS 26→27', () => {
     const snapshot = getSettings(new FakeConfigEditor(), createRevisionState())
     expect(ALL_KEYS).toHaveLength(31) // W7 25→26（workspacePath）、T2 26→27（newMessagePolicy）、T9 27→28（autoSteerPolicy）、T3 28→29（deferredTimeoutMs）
-    expect(SCHEMA_DEFAULTS.newMessagePolicy).toBe('queue')
+    expect(SCHEMA_DEFAULTS.newMessagePolicy).toBe('steer')
     expect(SETTINGS_GROUPS.behavior).toEqual([
       'interimMessages', 'interimRecall', 'interimRecallMs', 'sendErrorNotice', 'unknownCommand', 'rateLimitPerMinute', 'newMessagePolicy', 'autoSteerPolicy', 'deferredTimeoutMs', 'companionQq', 'groupQuietMs',
     ])
     expect(snapshot.groups.behavior).toEqual(SETTINGS_GROUPS.behavior)
-    expect(snapshot.config.newMessagePolicy).toBe('queue')
+    expect(snapshot.config.newMessagePolicy).toBe('steer')
     expect(snapshot.effect).toBe('restart') // 与全部 28 键同粒度：热重启生效
   })
 

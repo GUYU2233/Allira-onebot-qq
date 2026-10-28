@@ -268,13 +268,9 @@ export class InboundPipeline {
     // dispose → remove; the mapping is kept so the chat can resume).
     await this.ctx.sweepIdleChats()
 
-    // A new user message starts a fresh reply cycle: drop any unmerged loop
-    // residue from the previous cycle so interims never merge across turns.
-    const priorChat = this.ctx.getChat(chatId)
-    if (priorChat !== undefined) {
-      priorChat.loopBuffer = []
-      priorChat.loopPending = null
-    }
+    // Receiving input is not a turn boundary: busy input may steer the current
+    // turn, queue a later one, or be consumed as a command. Leave the active
+    // turn's pending output and in-flight interim bookkeeping to its tracker.
 
     // Fire-and-forget temp cleanup on each inbound.
     void this.ctx.media.cleanupExpired()

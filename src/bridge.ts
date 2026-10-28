@@ -26,7 +26,7 @@ import { buildChatId, classifyUserRole, splitChatId } from './chat.js'
 import type { AccessPolicyConfig } from './chat.js'
 import { buildPlatformPrompt } from './prompt.js'
 import { registerTools } from './tools.js'
-import { tryHandleCommand as routeCommand, STEER_ACCEPTED_NOTICE, type CommandContext } from './commands.js'
+import { tryHandleCommand as routeCommand, type CommandContext } from './commands.js'
 import { relayHostCards as relayCards, type CardRelayContext } from './card-relay.js'
 import { OutboundPipeline } from './outbound.js'
 import type { OutboundSegment, SendOptions } from './outbound.js'
@@ -48,10 +48,9 @@ import type { HealthDeps } from './health.js'
 import { FailureRefRegistry, failureRefSuffix } from './ref.js'
 import type { FailureRefKind } from './ref.js'
 import type { TraceStage } from './trace.js'
-/** T2 (P1): the queue notice sent to a chat when a message arrives while its
- * task is running under the default 'queue' policy — at most ONE per running
- * turn (the flag resets at turn/end) so a burst of queued messages never
- * spams the chat. Exported for the deterministic text wait in tests. */
+/** T2 (P1): the queue notice sent when a message arrives during a running
+ * turn but is not eligible for auto-steer (or queue mode is explicitly set) —
+ * at most ONE per running turn so queued bursts never spam the chat. */
 export const QUEUE_NOTICE_TEXT = '⏳ 当前任务运行中，新消息已排队，将在当前任务结束后依次处理。'
 
 /** Resolved runtime configuration for the bridge. */
@@ -95,18 +94,16 @@ export interface BridgeConfig {
    * chat→session mapping, so a later message resumes the same session. */
   chatIdleEvictDays?: number
   /** T2 (P1): how a new ordinary message is handled while the chat's task
-   * (agent turn) is running; absent → 'queue' (the default). 'queue' = the
-   * message keeps the 0.8.1 dispatch path (agent.followup queues it as the
-   * next turn — consumed AFTER the current turn ends, in arrival order) and
-   * the chat gets at most one queue notice per running turn; 'steer' = plain
-   * text (no media/quote/forward, non-restricted senders) is submitted as a
-   * supplementary instruction into the running turn via the same
-   * agent.steer kernel as steerTranscript, with a per-message submit notice. */
+   * (agent turn) is running; absent → 'steer' (the default). 'steer' = plain
+   * text (no media/quote/forward, eligible non-restricted senders) is submitted
+   * as a supplementary instruction into the running turn via agent.steer;
+   * media, quotes, forwards and restricted members still follow up as queued
+   * turns. 'queue' retains the 0.8.1 dispatch path and sends at most one queue
+   * notice per running turn. */
   newMessagePolicy?: 'queue' | 'steer'
-  /** T9-B (用户裁决 2026-10-12)：steer 模式下自动插话的发送者资格档位；
-   * absent → 'admin'（缺省）。'admin' = 仅管理员可自动插话；'all' = 所有
-   * 非受限发送者均可。不改变 /steer 命令（始终仅管理员）与 queue 模式行为，
-   * 也不放宽受限用户软限制（受限消息任何档都排队）。 */
+  /** T9-B: in steer mode, absent → 'admin' (the default); 'admin' = admins
+   * only, 'all' = any non-restricted sender. Does not change /steer (always
+   * admin-only) or queue mode, and never relaxes restricted-member limits. */
   autoSteerPolicy?: 'admin' | 'all'
   /** T3 (P2)：等待模型回复超时阈值（ms）——回合超过该时长没有任何模型输出
    * 时提示超时并登记补发跟踪（deferred delivery），回合完成后向原聊天补发
@@ -760,9 +757,8 @@ export class ChatBridge {
     if (nickname !== undefined && nickname !== '') chat.lastNickname = nickname
     chat.lastFollowup = text
     chat.lastActivityAt = Date.now()
-    // M3-D2a: a dispatched user turn starts a fresh interim cycle (the
-    // inbound residue reset already cleared the loop fields directly).
-    this.interim.onNewUserTurn(chat)
+    // followup may only enqueue a future turn. Do not reset the running
+    // turn's interim cycle here; session turn/start owns normalization.
     // Queue this turn's initiator role; the host's turn/start freezes it as
     // the running turn's role (M1-A2). Push and followup happen synchronously,
     // so the role cannot interleave with another dispatch.
@@ -967,13 +963,13 @@ export class ChatBridge {
    * Called for every non-command message AFTER all gates, only when deciding
    * what to do with it while the chat's task is running:
    * - no running turn → false (caller dispatches normally; the 0.8.1 path,
-   *   byte-identical — also the path for newMessagePolicy缺省 idle traffic);
+   *   byte-identical — idle traffic remains unchanged);
    * - 'steer' policy + plain text + non-restricted sender + autoSteerPolicy
    *   eligibility ('admin' 档缺省 = 仅管理员；'all' 档不限，T9-B 用户裁决
    *   2026-10-12) → the message is submitted into the running turn via the
    *   steerMessage kernel (consumed at the nearest step boundary, NO new turn)
-   *   and a submit notice goes out;
-   * - otherwise (queue policy default / media-quote-forward message /
+   *   and is accepted silently;
+   * - otherwise (explicit queue policy / media-quote-forward message /
    *   restricted group member / 不具备自动插话资格) → the 0.8.1 dispatch path
    *   (agent.followup queues it as the next turn: consumed after the current
    *   turn ends, in arrival order) plus the queue notice at most once per
@@ -996,13 +992,9 @@ export class ChatBridge {
     // both; /steer remains admin-only regardless of this knob; queue mode is
     // untouched.
     const autoSteerAllowed = (this.deps.config.autoSteerPolicy ?? 'admin') === 'all' || role === 'admin'
-    if ((this.deps.config.newMessagePolicy ?? 'queue') === 'steer' && plain && !restricted && autoSteerAllowed) {
+    if ((this.deps.config.newMessagePolicy ?? 'steer') === 'steer' && plain && !restricted && autoSteerAllowed) {
       this.steerMessage(chatId, text)
       currentTrace()?.emit('dispatch', { ok: true, reason: TRACE_REASONS.busyTurnSteered })
-      this.sendToChat(chatId, STEER_ACCEPTED_NOTICE).catch((error: unknown) => {
-        this.deps.log('debug', '插话提交提示发送失败: ' + describeError(error))
-        currentTrace()?.emit('notice', { ok: false, reason: '插话提交提示发送失败: ' + describeError(error) })
-      })
       return true
     }
     await this.dispatchFollowup(chatId, text, role, nickname)

@@ -120,7 +120,7 @@ export async function makeHarness(opts?: { failCreateFor?: string; mediaDir?: st
       maxVoiceBytes: 15 * 1024 * 1024, maxFileBytes: 20 * 1024 * 1024,
       textImageThreshold: opts?.textImageThreshold ?? 0, cardFooter: 'dsh', fontFiles: [], fontFamilies: [],
       agentPreset: 'standard', workspacePath: mediaDir,
-      // T2 (P1): busy-turn policy override (absent = the 'queue' default).
+      // T2 (P1): busy-turn policy override (absent = the 'steer' default).
       ...(opts?.newMessagePolicy !== undefined ? { newMessagePolicy: opts.newMessagePolicy } : {}),
       // T3 (P2): deferred-delivery timeout override (absent = the 10min default).
       ...(opts?.deferredTimeoutMs !== undefined ? { deferredTimeoutMs: opts.deferredTimeoutMs } : {}),

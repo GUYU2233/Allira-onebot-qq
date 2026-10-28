@@ -389,7 +389,7 @@ describe('interim tracker', () => {
     await connection.stop()
   })
 
-  it('clears unmerged loop residue when a new user message arrives', async () => {
+  it('preserves unmerged output when a new user message arrives before turn/end', async () => {
     const ctx = new Context()
     const sessionIds: string[] = []
     const captured = { followups: [] as Array<{ text: string; sessionId: string }> }
@@ -466,7 +466,7 @@ describe('interim tracker', () => {
       expect(outbound.filter(f => f.action === 'send_msg')).toHaveLength(1)
     })
 
-    // New user message arrives before turn/end: residue must be cleared.
+    // Arrival is not completion of the current turn: retain its output.
     client.send(JSON.stringify({
       post_type: 'message', message_type: 'private', user_id: 10001, self_id: 10002,
       message: [{ type: 'text', data: { text: '打断一下' } }],
@@ -475,12 +475,22 @@ describe('interim tracker', () => {
     }))
     await vi.waitFor(() => expect(captured.followups).toHaveLength(2))
 
-    // Turn ends: nothing left to merge, no final to send.
+    const chat = (bridge as unknown as { chats: Map<string, {
+      loopBuffer: Array<{ id: string; text: string }>; loopPending: string | null
+    }> }).chats.get('private:10001')!
+    expect(chat.loopBuffer).toHaveLength(1)
+    expect(chat.loopPending).toBe('中间评论二')
+
+    // Wait for actual settlement, not sessions.flush (which runs independently).
     ctx.emit('session/event', session as never, makeEvent('turn/end', { turn: 1, reason: { kind: 'completed' } }))
+    await vi.waitFor(() => expect(outbound.some(f => f.action === 'send_msg'
+      && JSON.stringify(f.params).includes('中间评论二'))).toBe(true))
     await vi.waitFor(() => expect(sessions.flush).toHaveBeenCalled())
-    expect(outbound.some(f => f.action === 'send_forward_msg' || f.action === 'send_private_forward_msg')).toBe(false)
-    expect(outbound.some(f => f.action === 'delete_msg')).toBe(false)
-    expect(outbound.filter(f => f.action === 'send_msg')).toHaveLength(1)
+    expect(outbound.filter(f => f.action === 'send_msg'
+      && JSON.stringify(f.params).includes('中间评论二'))).toHaveLength(1)
+    expect(outbound.filter(f => f.action === 'delete_msg')).toHaveLength(1)
+    expect(chat.loopBuffer).toEqual([])
+    expect(chat.loopPending).toBeNull()
 
     client.close()
     await bridge.stop()

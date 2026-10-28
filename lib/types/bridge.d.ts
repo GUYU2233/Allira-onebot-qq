@@ -20,10 +20,9 @@ import type { TraceSink } from './trace.js';
 import type { InjectChannel } from './inject.js';
 import type { InboundRecorder } from './record.js';
 import type { TraceStage } from './trace.js';
-/** T2 (P1): the queue notice sent to a chat when a message arrives while its
- * task is running under the default 'queue' policy — at most ONE per running
- * turn (the flag resets at turn/end) so a burst of queued messages never
- * spams the chat. Exported for the deterministic text wait in tests. */
+/** T2 (P1): the queue notice sent when a message arrives during a running
+ * turn but is not eligible for auto-steer (or queue mode is explicitly set) —
+ * at most ONE per running turn so queued bursts never spam the chat. */
 export declare const QUEUE_NOTICE_TEXT = "\u23F3 \u5F53\u524D\u4EFB\u52A1\u8FD0\u884C\u4E2D\uFF0C\u65B0\u6D88\u606F\u5DF2\u6392\u961F\uFF0C\u5C06\u5728\u5F53\u524D\u4EFB\u52A1\u7ED3\u675F\u540E\u4F9D\u6B21\u5904\u7406\u3002";
 /** Resolved runtime configuration for the bridge. */
 export interface BridgeConfig {
@@ -66,18 +65,16 @@ export interface BridgeConfig {
      * chat→session mapping, so a later message resumes the same session. */
     chatIdleEvictDays?: number;
     /** T2 (P1): how a new ordinary message is handled while the chat's task
-     * (agent turn) is running; absent → 'queue' (the default). 'queue' = the
-     * message keeps the 0.8.1 dispatch path (agent.followup queues it as the
-     * next turn — consumed AFTER the current turn ends, in arrival order) and
-     * the chat gets at most one queue notice per running turn; 'steer' = plain
-     * text (no media/quote/forward, non-restricted senders) is submitted as a
-     * supplementary instruction into the running turn via the same
-     * agent.steer kernel as steerTranscript, with a per-message submit notice. */
+     * (agent turn) is running; absent → 'steer' (the default). 'steer' = plain
+     * text (no media/quote/forward, eligible non-restricted senders) is submitted
+     * as a supplementary instruction into the running turn via agent.steer;
+     * media, quotes, forwards and restricted members still follow up as queued
+     * turns. 'queue' retains the 0.8.1 dispatch path and sends at most one queue
+     * notice per running turn. */
     newMessagePolicy?: 'queue' | 'steer';
-    /** T9-B (用户裁决 2026-10-12)：steer 模式下自动插话的发送者资格档位；
-     * absent → 'admin'（缺省）。'admin' = 仅管理员可自动插话；'all' = 所有
-     * 非受限发送者均可。不改变 /steer 命令（始终仅管理员）与 queue 模式行为，
-     * 也不放宽受限用户软限制（受限消息任何档都排队）。 */
+    /** T9-B: in steer mode, absent → 'admin' (the default); 'admin' = admins
+     * only, 'all' = any non-restricted sender. Does not change /steer (always
+     * admin-only) or queue mode, and never relaxes restricted-member limits. */
     autoSteerPolicy?: 'admin' | 'all';
     /** T3 (P2)：等待模型回复超时阈值（ms）——回合超过该时长没有任何模型输出
      * 时提示超时并登记补发跟踪（deferred delivery），回合完成后向原聊天补发
@@ -450,13 +447,13 @@ export declare class ChatBridge {
      * Called for every non-command message AFTER all gates, only when deciding
      * what to do with it while the chat's task is running:
      * - no running turn → false (caller dispatches normally; the 0.8.1 path,
-     *   byte-identical — also the path for newMessagePolicy缺省 idle traffic);
+     *   byte-identical — idle traffic remains unchanged);
      * - 'steer' policy + plain text + non-restricted sender + autoSteerPolicy
      *   eligibility ('admin' 档缺省 = 仅管理员；'all' 档不限，T9-B 用户裁决
      *   2026-10-12) → the message is submitted into the running turn via the
      *   steerMessage kernel (consumed at the nearest step boundary, NO new turn)
-     *   and a submit notice goes out;
-     * - otherwise (queue policy default / media-quote-forward message /
+     *   and is accepted silently;
+     * - otherwise (explicit queue policy / media-quote-forward message /
      *   restricted group member / 不具备自动插话资格) → the 0.8.1 dispatch path
      *   (agent.followup queues it as the next turn: consumed after the current
      *   turn ends, in arrival order) plus the queue notice at most once per
